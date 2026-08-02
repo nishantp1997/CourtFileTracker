@@ -78,11 +78,9 @@ fun MainAppScreen(
     var fileNoInput by remember { mutableStateOf("") }
     var remarksInput by remember { mutableStateOf("") }
     var judgeNameInput by remember { mutableStateOf("") }
-    
-    // Fix #2: NO initial default storage location value assigned
     var storageLocationInput by remember { mutableStateOf("") }
 
-    // Dropdown State for "Not Sent" Mode
+    // Dropdown State
     var locationDropdownExpanded by remember { mutableStateOf(false) }
     val defaultLocations = listOf("Shelf", "Bundle", "Person", "Seat", "Chamber")
 
@@ -97,7 +95,7 @@ fun MainAppScreen(
     var reportTargetDate by remember { mutableStateOf(currentDate) }
     var reportTargetCourtNo by remember { mutableStateOf("") }
 
-    // Bulk Operations Mode
+    // Bulk Operations Mode (Locked & Preserved)
     var bulkDateInput by remember { mutableStateOf(currentDate) }
     var bulkCourtNo by remember { mutableStateOf("") }
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
@@ -107,7 +105,7 @@ fun MainAppScreen(
     var activeTraceRecord by remember { mutableStateOf<FileRecord?>(null) }
     var activeUpdateRecord by remember { mutableStateOf<FileRecord?>(null) }
 
-    // Normalized Query Triggers for Date & Keyword Matching
+    // Normalized Query Triggers
     val normalizedSearchDate = remember(searchDateInput) { normalizeDate(searchDateInput) }
     val normalizedBulkDate = remember(bulkDateInput) { normalizeDate(bulkDateInput) }
     val normalizedReportDate = remember(reportTargetDate) { normalizeDate(reportTargetDate) }
@@ -206,7 +204,7 @@ fun MainAppScreen(
                     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text("1. Entire Database Report", fontWeight = FontWeight.Bold)
-                            Text("Generates complete ledger with full audit stack traces (including deleted files).", fontSize = 12.sp, color = Color.Gray)
+                            Text("Generates complete ledger with full audit stack traces.", fontSize = 12.sp, color = Color.Gray)
                             Button(
                                 onClick = { PdfReportGenerator.generateMasterReport(context, allRecords) },
                                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
@@ -367,6 +365,7 @@ fun MainAppScreen(
                     }
 
                 } else if (currentView == "BULK") {
+                    // Bulk Operations Screen (STRICTLY PRESERVED - NO REPORT GENERATION TRIGGERS)
                     Text("Select Date & Court No to Bulk Update", fontWeight = FontWeight.Bold)
 
                     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -400,13 +399,12 @@ fun MainAppScreen(
                         enabled = selectedFileIds.isNotEmpty(),
                         onClick = {
                             scope.launch {
-                                val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                                 val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
                                 val updatedList = selectedRecords.map { rec ->
                                     val logDetail = " | Court No: ${rec.courtNo} | Serial: ${rec.serialNo}"
                                     rec.copy(
                                         status = bulkTargetStatus,
-                                        historyLog = "${rec.historyLog}\n[$normalizedBulkDate $time] Bulk Status changed to '$bulkTargetStatus'$logDetail"
+                                        historyLog = "${rec.historyLog}\n[$normalizedBulkDate] Bulk Status changed to '$bulkTargetStatus'$logDetail"
                                     )
                                 }
                                 dao.insertOrUpdateAll(updatedList)
@@ -492,7 +490,6 @@ fun MainAppScreen(
                             } else if (selectedMode == "Chamber") {
                                 OutlinedTextField(value = judgeNameInput, onValueChange = { judgeNameInput = it }, label = { Text("Hon'ble Judge Name *") }, modifier = Modifier.fillMaxWidth())
                             } else {
-                                // Dropdown Storage Location Selector (No default initial value)
                                 Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                                     OutlinedTextField(
                                         value = storageLocationInput,
@@ -547,7 +544,6 @@ fun MainAppScreen(
 
                                     scope.launch {
                                         val existing = dao.getRecordByFileNo(fileNoInput.trim())
-                                        val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                                         val newStatus = if (selectedMode == "Dispatched") "Dispatched" else if (selectedMode == "Chamber") "Sent to Chamber" else "Not Sent to Court"
                                         val isChamber = selectedMode == "Chamber"
                                         val judge = if (isChamber) judgeNameInput else ""
@@ -563,8 +559,8 @@ fun MainAppScreen(
                                         val dispatchDetails = if (selectedMode == "Dispatched") " | Court No: ${courtNoInput.trim()} | Serial: $serialFormatted" else ""
                                         val logRemark = if (remarksInput.isNotBlank()) " | Remarks: $remarksInput" else ""
 
-                                        // Fix #5: Audit stack trace explicitly contains Court No, Serial No and List Type
-                                        val entryLog = "[$cleanDate $time] Registered as '$newStatus'$dispatchDetails${if (isChamber) " (Judge: $judge)" else ""}$logRemark"
+                                        // Audit stack trace stores date only (time omitted)
+                                        val entryLog = "[$cleanDate] Registered as '$newStatus'$dispatchDetails${if (isChamber) " (Judge: $judge)" else ""}$logRemark"
                                         val updatedHistory = if (existing != null) "${existing.historyLog}\n$entryLog" else entryLog
 
                                         val record = FileRecord(
@@ -682,9 +678,9 @@ fun MainAppScreen(
                     enabled = isSaveEnabled,
                     onClick = {
                         scope.launch {
-                            val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                             val courtInfoLog = if (currentRecordForUpdate.courtNo != "N/A") " | Court No: ${currentRecordForUpdate.courtNo} | Serial: ${currentRecordForUpdate.serialNo}" else ""
-                            val logEntry = "[$dispatchDateInput $time] Status changed to '$newStatus'$courtInfoLog ${if (isDeleteMode) "Reason: $deleteReason" else "Loc: $locInput"}"
+                            // Audit log stores date only (time omitted)
+                            val logEntry = "[$dispatchDateInput] Status changed to '$newStatus'$courtInfoLog ${if (isDeleteMode) "Reason: $deleteReason" else "Loc: $locInput"}"
 
                             val updated = currentRecordForUpdate.copy(
                                 status = newStatus,
