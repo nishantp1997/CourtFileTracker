@@ -54,7 +54,6 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records WHERE fileNo = :fileNo LIMIT 1")
     suspend fun getRecordByFileNo(fileNo: String): FileRecord?
 
-    // Date Search: includes 'Entry Deleted' records and handles normalized date matching
     @Query("""
         SELECT * FROM file_records 
         WHERE (TRIM(dispatchDate) = TRIM(:date) OR dispatchDatesCsv LIKE '%' || TRIM(:date) || '%')
@@ -81,15 +80,15 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records ORDER BY fileNo ASC")
     fun getAllRecords(): Flow<List<FileRecord>>
 
-    // Zero-tolerant keyword search covering fileNo, courtNo, serialNo, status, and remarks
+    // Strict Zero-Ignored Keyword Search across Case No, Court No, Serial No, Status & Remarks
     @Query("""
         SELECT * FROM file_records 
         WHERE fileNo LIKE '%' || :query || '%' 
-           OR LTRIM(fileNo, '0') LIKE '%' || :query || '%'
+           OR LTRIM(fileNo, '0') LIKE '%' || LTRIM(:query, '0') || '%'
            OR courtNo LIKE '%' || :query || '%' 
-           OR LTRIM(courtNo, '0') LIKE '%' || :query || '%'
+           OR LTRIM(courtNo, '0') LIKE '%' || LTRIM(:query, '0') || '%'
            OR serialNo LIKE '%' || :query || '%'
-           OR LTRIM(serialNo, '0') LIKE '%' || :query || '%'
+           OR LTRIM(serialNo, '0') LIKE '%' || LTRIM(:query, '0') || '%'
            OR status LIKE '%' || :query || '%' 
            OR storageLocation LIKE '%' || :query || '%' 
            OR judgeName LIKE '%' || :query || '%' 
@@ -99,7 +98,7 @@ interface FileRecordDao {
     fun searchRecords(query: String): Flow<List<FileRecord>>
 }
 
-@Database(entities = [FileRecord::class], version = 10, exportSchema = false)
+@Database(entities = [FileRecord::class], version = 11, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileRecordDao(): FileRecordDao
 
