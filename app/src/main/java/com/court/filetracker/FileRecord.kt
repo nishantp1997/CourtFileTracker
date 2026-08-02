@@ -23,7 +23,6 @@ fun stripLeadingZeros(input: String): String {
     val trimmed = input.trim()
     if (trimmed.isBlank()) return ""
     
-    // Case Number format: Number/Year (e.g., 00123/2026 -> 123/2026)
     if (trimmed.contains("/")) {
         val parts = trimmed.split("/")
         if (parts.size == 2) {
@@ -32,7 +31,6 @@ fun stripLeadingZeros(input: String): String {
         }
     }
     
-    // Decimal/Numeric string format (e.g., 015.5 -> 15.5, 04 -> 4)
     if (trimmed.matches(Regex("^0+\\d+(\\.\\d+)?$"))) {
         return trimmed.replaceFirst(Regex("^0+"), "")
     }
@@ -40,7 +38,6 @@ fun stripLeadingZeros(input: String): String {
     return trimmed
 }
 
-// Search normalization helper
 fun normalizeSearchQuery(query: String): String {
     return stripLeadingZeros(query)
 }
@@ -51,11 +48,11 @@ fun normalizeSearchQuery(query: String): String {
 )
 data class FileRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val fileNo: String,                  // Unique Key (e.g. 1234/2026 - stripped leading zeros)
+    val fileNo: String,                  // Unique Key (e.g. 1234/2026)
     val dispatchDate: String,            // Latest active dispatch date (DD-MM-YY)
     val dispatchDatesCsv: String = "",   // All historical dispatch dates
-    val courtNo: String = "N/A",         // Active Court No. (Stripped leading zero)
-    val serialNo: String = "",           // List Type & Decimal Serial No. (Stripped leading zero)
+    val courtNo: String = "N/A",         // Active Court No.
+    val serialNo: String = "",           // List Type & Serial No.
     val status: String = "Dispatched",   // Active Status
     val storageLocation: String = "",   // Active Location
     val sentToChamber: Boolean = false,  // Active Chamber Flag
@@ -75,16 +72,21 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records WHERE fileNo = :fileNo LIMIT 1")
     suspend fun getRecordByFileNo(fileNo: String): FileRecord?
 
+    // Historical Query: Returns files dispatched on target date regardless of present status or future re-dispatch
     @Query("""
         SELECT * FROM file_records 
-        WHERE (TRIM(dispatchDate) = TRIM(:date) OR dispatchDatesCsv LIKE '%' || TRIM(:date) || '%')
+        WHERE (TRIM(dispatchDate) = TRIM(:date) 
+           OR dispatchDatesCsv LIKE '%' || TRIM(:date) || '%'
+           OR historyLog LIKE '%[' || TRIM(:date) || ']%')
         ORDER BY id DESC
     """)
     fun getRecordsByDate(date: String): Flow<List<FileRecord>>
 
     @Query("""
         SELECT DISTINCT TRIM(courtNo) FROM file_records 
-        WHERE (TRIM(dispatchDate) = TRIM(:date) OR dispatchDatesCsv LIKE '%' || TRIM(:date) || '%') 
+        WHERE (TRIM(dispatchDate) = TRIM(:date) 
+           OR dispatchDatesCsv LIKE '%' || TRIM(:date) || '%'
+           OR historyLog LIKE '%[' || TRIM(:date) || ']%') 
         AND courtNo != 'N/A' 
         ORDER BY courtNo ASC
     """)
@@ -92,7 +94,9 @@ interface FileRecordDao {
 
     @Query("""
         SELECT * FROM file_records 
-        WHERE (TRIM(dispatchDate) = TRIM(:date) OR dispatchDatesCsv LIKE '%' || TRIM(:date) || '%') 
+        WHERE (TRIM(dispatchDate) = TRIM(:date) 
+           OR dispatchDatesCsv LIKE '%' || TRIM(:date) || '%'
+           OR historyLog LIKE '%[' || TRIM(:date) || ']%') 
         AND (TRIM(courtNo) = TRIM(:courtNo) OR LTRIM(courtNo, '0') = LTRIM(:courtNo, '0'))
         ORDER BY id ASC
     """)
@@ -107,7 +111,7 @@ interface FileRecordDao {
            OR LTRIM(fileNo, '0') LIKE '%' || :query || '%'
            OR courtNo LIKE '%' || :query || '%' 
            OR LTRIM(courtNo, '0') LIKE '%' || :query || '%'
-           OR serialNo LIKE '%' || :query || '%'
+           OR serialNo LIKE '%' || :query || '%' 
            OR status LIKE '%' || :query || '%' 
            OR storageLocation LIKE '%' || :query || '%' 
            OR judgeName LIKE '%' || :query || '%' 
@@ -117,7 +121,7 @@ interface FileRecordDao {
     fun searchRecords(query: String): Flow<List<FileRecord>>
 }
 
-@Database(entities = [FileRecord::class], version = 11, exportSchema = false)
+@Database(entities = [FileRecord::class], version = 12, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileRecordDao(): FileRecordDao
 
