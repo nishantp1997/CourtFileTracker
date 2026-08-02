@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -90,12 +91,12 @@ fun MainAppScreen(
     var searchSelectedCourt by remember { mutableStateOf<String?>(null) }
     var globalKeywordSearch by remember { mutableStateOf("") }
 
-    // Report Generator Specific States
+    // Report Generator Specific Input States
     var reportTargetFileNo by remember { mutableStateOf("") }
     var reportTargetDate by remember { mutableStateOf(currentDate) }
     var reportTargetCourtNo by remember { mutableStateOf("") }
 
-    // Bulk Operations Mode (Locked & Preserved)
+    // Bulk Operations Mode (Preserved & Locked)
     var bulkDateInput by remember { mutableStateOf(currentDate) }
     var bulkCourtNo by remember { mutableStateOf("") }
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
@@ -111,13 +112,12 @@ fun MainAppScreen(
     val normalizedReportDate = remember(reportTargetDate) { normalizeDate(reportTargetDate) }
     val normalizedSearchKeyword = remember(globalKeywordSearch) { normalizeSearchQuery(globalKeywordSearch) }
 
-    // Data Flows
+    // Data Flows for UI Listing (Read-only UI Display)
     val recordsList by dao.getRecordsByDate(normalizeDate(dispatchDateInput)).collectAsState(initial = emptyList())
     val searchCourtsList by dao.getCourtsByDate(normalizedSearchDate).collectAsState(initial = emptyList())
     val searchCourtFiles by (searchSelectedCourt?.let { dao.getRecordsByDateAndCourt(normalizedSearchDate, it) } ?: dao.getRecordsByDate(normalizedSearchDate)).collectAsState(initial = emptyList())
     val bulkCourtFiles by (if (bulkCourtNo.isNotBlank()) dao.getRecordsByDateAndCourt(normalizedBulkDate, bulkCourtNo) else dao.getRecordsByDate(normalizedBulkDate)).collectAsState(initial = emptyList())
     val globalSearchResults by dao.searchRecords(normalizedSearchKeyword).collectAsState(initial = emptyList())
-    val allRecords by dao.getAllRecords().collectAsState(initial = emptyList())
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -176,7 +176,7 @@ fun MainAppScreen(
                             when (currentView) {
                                 "SEARCH_DATE_COURT" -> "🔍 Search by Date & Court"
                                 "BULK" -> "⚡ Bulk Operations by Date & Court"
-                                "REPORTS_PANEL" -> "📄 Landscape PDF Reports"
+                                "REPORTS_PANEL" -> "📄 Landscape PDF Reports Engine"
                                 else -> "Allahabad High Court File Tracker"
                             },
                             fontSize = 16.sp
@@ -199,6 +199,7 @@ fun MainAppScreen(
             Column(modifier = Modifier.padding(padding).padding(12.dp)) {
 
                 if (currentView == "REPORTS_PANEL") {
+                    // ISOLATED REPORT GENERATION PANEL
                     Text("Select PDF Report Type (Legal Size Landscape):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
 
                     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
@@ -206,7 +207,12 @@ fun MainAppScreen(
                             Text("1. Entire Database Report", fontWeight = FontWeight.Bold)
                             Text("Generates complete ledger with full audit stack traces.", fontSize = 12.sp, color = Color.Gray)
                             Button(
-                                onClick = { PdfReportGenerator.generateMasterReport(context, allRecords) },
+                                onClick = {
+                                    scope.launch {
+                                        val snapshot = dao.getAllRecords().first()
+                                        PdfReportGenerator.generateMasterReport(context, snapshot)
+                                    }
+                                },
                                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                             ) {
                                 Text("EXPORT MASTER LEDGER PDF")
@@ -257,9 +263,8 @@ fun MainAppScreen(
                             Button(
                                 onClick = {
                                     scope.launch {
-                                        dao.getRecordsByDateAndCourt(normalizedReportDate, reportTargetCourtNo.trim()).collect { recs ->
-                                            PdfReportGenerator.generateDateCourtReport(context, normalizedReportDate, reportTargetCourtNo.trim(), recs)
-                                        }
+                                        val recs = dao.getRecordsByDateAndCourt(normalizedReportDate, reportTargetCourtNo.trim()).first()
+                                        PdfReportGenerator.generateDateCourtReport(context, normalizedReportDate, reportTargetCourtNo.trim(), recs)
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
@@ -306,13 +311,11 @@ fun MainAppScreen(
                                         if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp)
                                         if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
 
-                                        Row(modifier = Modifier.align(Alignment.End).padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            IconButton(onClick = { PdfReportGenerator.generateSingleFileReport(context, record) }) {
-                                                Icon(Icons.Default.Share, contentDescription = "PDF Sheet")
-                                            }
-                                            Button(onClick = { activeUpdateRecord = record }) {
-                                                Text("Update Status")
-                                            }
+                                        Button(
+                                            onClick = { activeUpdateRecord = record },
+                                            modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
+                                        ) {
+                                            Text("Update Status")
                                         }
                                     }
                                 }
@@ -350,13 +353,11 @@ fun MainAppScreen(
                                         if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
                                         if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
 
-                                        Row(modifier = Modifier.align(Alignment.End).padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            IconButton(onClick = { PdfReportGenerator.generateSingleFileReport(context, record) }) {
-                                                Icon(Icons.Default.Share, contentDescription = "PDF Sheet")
-                                            }
-                                            Button(onClick = { activeUpdateRecord = record }) {
-                                                Text("Update Status")
-                                            }
+                                        Button(
+                                            onClick = { activeUpdateRecord = record },
+                                            modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
+                                        ) {
+                                            Text("Update Status")
                                         }
                                     }
                                 }
@@ -365,7 +366,6 @@ fun MainAppScreen(
                     }
 
                 } else if (currentView == "BULK") {
-                    // Bulk Operations Screen (STRICTLY PRESERVED - NO REPORT GENERATION TRIGGERS)
                     Text("Select Date & Court No to Bulk Update", fontWeight = FontWeight.Bold)
 
                     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -559,7 +559,6 @@ fun MainAppScreen(
                                         val dispatchDetails = if (selectedMode == "Dispatched") " | Court No: ${courtNoInput.trim()} | Serial: $serialFormatted" else ""
                                         val logRemark = if (remarksInput.isNotBlank()) " | Remarks: $remarksInput" else ""
 
-                                        // Audit stack trace stores date only (time omitted)
                                         val entryLog = "[$cleanDate] Registered as '$newStatus'$dispatchDetails${if (isChamber) " (Judge: $judge)" else ""}$logRemark"
                                         val updatedHistory = if (existing != null) "${existing.historyLog}\n$entryLog" else entryLog
 
@@ -606,13 +605,11 @@ fun MainAppScreen(
                                     if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
                                     if (record.remarks.isNotBlank()) Text("📝 ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
 
-                                    Row(modifier = Modifier.align(Alignment.End).padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        IconButton(onClick = { PdfReportGenerator.generateSingleFileReport(context, record) }) {
-                                            Icon(Icons.Default.Share, contentDescription = "Case PDF Sheet")
-                                        }
-                                        Button(onClick = { activeUpdateRecord = record }) {
-                                            Text("Update Status")
-                                        }
+                                    Button(
+                                        onClick = { activeUpdateRecord = record },
+                                        modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
+                                    ) {
+                                        Text("Update Status")
                                     }
                                 }
                             }
@@ -623,7 +620,7 @@ fun MainAppScreen(
         }
     }
 
-    // Disposal Update Modal
+    // DISPOSAL UPDATE MODAL (STRICTLY ISOLATED DATABASE WRITE ONLY)
     val currentRecordForUpdate = activeUpdateRecord
     if (currentRecordForUpdate != null) {
         var newStatus by remember { mutableStateOf("Taken Up") }
@@ -679,7 +676,6 @@ fun MainAppScreen(
                     onClick = {
                         scope.launch {
                             val courtInfoLog = if (currentRecordForUpdate.courtNo != "N/A") " | Court No: ${currentRecordForUpdate.courtNo} | Serial: ${currentRecordForUpdate.serialNo}" else ""
-                            // Audit log stores date only (time omitted)
                             val logEntry = "[$dispatchDateInput] Status changed to '$newStatus'$courtInfoLog ${if (isDeleteMode) "Reason: $deleteReason" else "Loc: $locInput"}"
 
                             val updated = currentRecordForUpdate.copy(
@@ -690,8 +686,10 @@ fun MainAppScreen(
                                 remarks = remarksUpdate,
                                 historyLog = "${currentRecordForUpdate.historyLog}\n$logEntry"
                             )
+                            // Strict DB write with ZERO report calls
                             dao.insertOrUpdateRecord(updated)
                             activeUpdateRecord = null
+                            Toast.makeText(context, "Status Updated Successfully!", Toast.LENGTH_SHORT).show()
                         }
                     }
                 ) { Text("Save Changes") }
