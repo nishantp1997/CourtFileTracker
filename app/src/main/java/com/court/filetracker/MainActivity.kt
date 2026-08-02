@@ -52,23 +52,14 @@ fun CourtFileTrackerApp(dao: FileRecordDao) {
     val coroutineScope = rememberCoroutineScope()
 
     var selectedDate by remember { mutableStateOf(SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())) }
-    var isDispatched by remember { mutableStateOf(true) }
-
-    // Dispatched Fields
     var courtNo by remember { mutableStateOf("") }
+    
     val listTypes = listOf("DCL", "ACL", "Correction List")
     var selectedListType by remember { mutableStateOf(listTypes[0]) }
     var isListTypeExpanded by remember { mutableStateOf(false) }
     var serialNoDigits by remember { mutableStateOf("") }
-    
-    // Shared Field
     var fileNo by remember { mutableStateOf("") }
-
-    // Retained Storage Fields (Not Sent)
-    var retainedChoice by remember { mutableStateOf("Shelf") }
-    var retainedBundleNo by remember { mutableStateOf("") }
-    var retainedPersonName by remember { mutableStateOf("") }
-
+    
     var searchQuery by remember { mutableStateOf("") }
     var recordToUpdate by remember { mutableStateOf<FileRecord?>(null) }
 
@@ -84,37 +75,13 @@ fun CourtFileTrackerApp(dao: FileRecordDao) {
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Input Card
+        // Input Card (Morning Entry)
         Card(
             modifier = Modifier.fillMaxWidth(),
             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(text = "Add File Record", fontWeight = FontWeight.Bold)
-                    
-                    SingleChoiceSegmentedButtonRow {
-                        SegmentedButton(
-                            selected = isDispatched,
-                            onClick = { isDispatched = true },
-                            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
-                        ) {
-                            Text("Dispatched", fontSize = 12.sp)
-                        }
-                        SegmentedButton(
-                            selected = !isDispatched,
-                            onClick = { isDispatched = false },
-                            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
-                        ) {
-                            Text("Not Sent", fontSize = 12.sp)
-                        }
-                    }
-                }
+                Text(text = "☀️ Morning Dispatch Entry", fontWeight = FontWeight.Bold)
 
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -125,146 +92,90 @@ fun CourtFileTrackerApp(dao: FileRecordDao) {
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                if (isDispatched) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = courtNo,
+                        onValueChange = { courtNo = it },
+                        label = { Text("Court No.") },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    ExposedDropdownMenuBox(
+                        expanded = isListTypeExpanded,
+                        onExpandedChange = { isListTypeExpanded = !isListTypeExpanded },
+                        modifier = Modifier.weight(1.2f)
                     ) {
                         OutlinedTextField(
-                            value = courtNo,
-                            onValueChange = { courtNo = it },
-                            label = { Text("Court No.") },
-                            modifier = Modifier.weight(1f)
+                            value = selectedListType,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("List Type") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isListTypeExpanded) },
+                            modifier = Modifier.menuAnchor()
                         )
-
-                        ExposedDropdownMenuBox(
+                        ExposedDropdownMenu(
                             expanded = isListTypeExpanded,
-                            onExpandedChange = { isListTypeExpanded = !isListTypeExpanded },
-                            modifier = Modifier.weight(1.2f)
+                            onDismissRequest = { isListTypeExpanded = false }
                         ) {
-                            OutlinedTextField(
-                                value = selectedListType,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("List Type") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isListTypeExpanded) },
-                                modifier = Modifier.menuAnchor()
-                            )
-                            ExposedDropdownMenu(
-                                expanded = isListTypeExpanded,
-                                onDismissRequest = { isListTypeExpanded = false }
-                            ) {
-                                listTypes.forEach { type ->
-                                    DropdownMenuItem(
-                                        text = { Text(type) },
-                                        onClick = {
-                                            selectedListType = type
-                                            isListTypeExpanded = false
-                                        }
-                                    )
-                                }
+                            listTypes.forEach { type ->
+                                DropdownMenuItem(
+                                    text = { Text(type) },
+                                    onClick = {
+                                        selectedListType = type
+                                        isListTypeExpanded = false
+                                    }
+                                )
                             }
                         }
                     }
+                }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = serialNoDigits,
-                            onValueChange = { serialNoDigits = it },
-                            label = { Text("Serial No.") },
-                            placeholder = { Text("e.g. 15") },
-                            modifier = Modifier.weight(1f)
-                        )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = serialNoDigits,
+                        onValueChange = { serialNoDigits = it },
+                        label = { Text("Serial No.") },
+                        placeholder = { Text("e.g. 15") },
+                        modifier = Modifier.weight(1f)
+                    )
 
-                        OutlinedTextField(
-                            value = fileNo,
-                            onValueChange = { fileNo = it },
-                            label = { Text("File No.") },
-                            placeholder = { Text("e.g. 1234/2026") },
-                            modifier = Modifier.weight(1.5f)
-                        )
-                    }
-                } else {
                     OutlinedTextField(
                         value = fileNo,
                         onValueChange = { fileNo = it },
-                        label = { Text("File No. (e.g. 1234/2026)") },
-                        modifier = Modifier.fillMaxWidth()
+                        label = { Text("File No.") },
+                        placeholder = { Text("e.g. 1234/2026") },
+                        modifier = Modifier.weight(1.5f)
                     )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text("Storage Place:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        listOf("Shelf", "Bundle", "Person").forEach { loc ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = (retainedChoice == loc),
-                                    onClick = { retainedChoice = loc }
-                                )
-                                Text(loc, fontSize = 13.sp)
-                                Spacer(modifier = Modifier.width(8.dp))
-                            }
-                        }
-                    }
-
-                    if (retainedChoice == "Bundle") {
-                        OutlinedTextField(
-                            value = retainedBundleNo,
-                            onValueChange = { retainedBundleNo = it },
-                            label = { Text("Bundle No. (e.g. 1 for B-1)") },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-
-                    if (retainedChoice == "Person") {
-                        OutlinedTextField(
-                            value = retainedPersonName,
-                            onValueChange = { retainedPersonName = it },
-                            label = { Text("Person's Name") },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
                 Button(
                     onClick = {
-                        if (fileNo.isNotBlank()) {
-                            val formattedSerialNo = if (isDispatched && serialNoDigits.isNotBlank()) "$selectedListType - ${serialNoDigits.trim()}" else ""
-                            val statusVal = if (isDispatched) "Dispatched" else "Not Sent to Court"
-                            
-                            val locVal = if (!isDispatched) {
-                                when (retainedChoice) {
-                                    "Bundle" -> "B-${retainedBundleNo.trim()}"
-                                    "Person" -> "Person: ${retainedPersonName.trim()}"
-                                    else -> "Shelf"
-                                }
-                            } else ""
-
+                        if (courtNo.isNotBlank() && serialNoDigits.isNotBlank() && fileNo.isNotBlank()) {
+                            val formattedSerialNo = "$selectedListType - ${serialNoDigits.trim()}"
                             coroutineScope.launch {
                                 dao.insertRecord(
                                     FileRecord(
                                         dispatchDate = selectedDate,
-                                        courtNo = if (isDispatched) courtNo.trim() else "N/A",
+                                        courtNo = courtNo.trim(),
                                         serialNo = formattedSerialNo,
                                         fileNo = fileNo.trim(),
-                                        status = statusVal,
-                                        storageLocation = locVal
+                                        status = "Dispatched"
                                     )
                                 )
                                 fileNo = ""
                                 serialNoDigits = ""
-                                retainedBundleNo = ""
-                                retainedPersonName = ""
                                 Toast.makeText(context, "Record Saved!", Toast.LENGTH_SHORT).show()
                             }
                         } else {
-                            Toast.makeText(context, "Please enter File No.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Please fill all fields", Toast.LENGTH_SHORT).show()
                         }
                     },
                     modifier = Modifier.align(Alignment.End)
@@ -280,7 +191,7 @@ fun CourtFileTrackerApp(dao: FileRecordDao) {
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            label = { Text("Search File No, Court, Status, Location, Person") },
+            label = { Text("Search File No, Court, Status, Person, or Location") },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
             modifier = Modifier.fillMaxWidth()
         )
@@ -288,7 +199,7 @@ fun CourtFileTrackerApp(dao: FileRecordDao) {
         Spacer(modifier = Modifier.height(12.dp))
 
         Text(
-            text = if (searchQuery.isNotBlank()) "Search Results" else "Records for $selectedDate",
+            text = if (searchQuery.isNotBlank()) "Search Results" else "Dispatches for $selectedDate",
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
         )
 
@@ -314,15 +225,21 @@ fun CourtFileTrackerApp(dao: FileRecordDao) {
         }
     }
 
+    // Evening Status & Storage Location Dialog
     if (recordToUpdate != null) {
         StatusUpdateDialog(
             record = recordToUpdate!!,
             onDismiss = { recordToUpdate = null },
-            onStatusSaved = { updatedRecord ->
+            onStatusSaved = { newStatus, storageLoc ->
                 coroutineScope.launch {
-                    dao.insertRecord(updatedRecord)
+                    dao.insertRecord(
+                        recordToUpdate!!.copy(
+                            status = newStatus,
+                            storageLocation = storageLoc
+                        )
+                    )
                     recordToUpdate = null
-                    Toast.makeText(context, "Record Updated!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Updated: $newStatus", Toast.LENGTH_SHORT).show()
                 }
             }
         )
@@ -356,9 +273,7 @@ fun RecordItem(
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            if (record.courtNo != "N/A") {
-                Text(text = "Court No: ${record.courtNo} ${if (record.serialNo.isNotBlank()) "| ${record.serialNo}" else ""}")
-            }
+            Text(text = "Court No: ${record.courtNo} | ${record.serialNo}")
             
             if (record.storageLocation.isNotBlank()) {
                 Text(
@@ -378,7 +293,7 @@ fun RecordItem(
                 TextButton(onClick = onUpdateStatusClick) {
                     Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Update / Edit")
+                    Text("Update Status / Location")
                 }
                 IconButton(onClick = onDelete) {
                     Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
@@ -394,7 +309,6 @@ fun StatusBadge(status: String) {
         "Taken Up" -> Pair(Color(0xFFD1E7DD), Color(0xFF0F5132))
         "Pass Over" -> Pair(Color(0xFFFFF3CD), Color(0xFF664D03))
         "Handed Back to Me" -> Pair(Color(0xFFCFE2FF), Color(0xFF084298))
-        "Not Sent to Court" -> Pair(Color(0xFFF8D7DA), Color(0xFF842029))
         else -> Pair(Color(0xFFE2E3E5), Color(0xFF41464B))
     }
 
@@ -412,18 +326,15 @@ fun StatusBadge(status: String) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatusUpdateDialog(
     record: FileRecord,
     onDismiss: () -> Unit,
-    onStatusSaved: (updatedRecord: FileRecord) -> Unit
+    onStatusSaved: (status: String, storageLocation: String) -> Unit
 ) {
-    var isDispatchedCategory by remember { mutableStateOf(record.status != "Not Sent to Court") }
     var selectedStatus by remember { mutableStateOf(record.status) }
-
-    var courtNo by remember { mutableStateOf(if (record.courtNo != "N/A") record.courtNo else "") }
-
+    
+    // Pass Over Location States
     var passOverChoice by remember { 
         mutableStateOf(
             when {
@@ -433,9 +344,10 @@ fun StatusUpdateDialog(
             }
         ) 
     }
-    var bundleNoDigits by remember { mutableStateOf(if (record.storageLocation.startsWith("B-")) record.storageLocation.removePrefix("B-") else "") }
-    var personName by remember { mutableStateOf(if (record.storageLocation.startsWith("Person: ") && record.status != "Handed Back to Me") record.storageLocation.removePrefix("Person: ") else "") }
+    var passOverBundleNo by remember { mutableStateOf(if (record.storageLocation.startsWith("B-")) record.storageLocation.removePrefix("B-") else "") }
+    var passOverPersonName by remember { mutableStateOf(if (record.storageLocation.startsWith("Person: ")) record.storageLocation.removePrefix("Person: ") else "") }
 
+    // Handed Back Location States
     var handedBackChoice by remember { 
         mutableStateOf(
             when {
@@ -447,33 +359,117 @@ fun StatusUpdateDialog(
             }
         ) 
     }
-    var handedBackPersonName by remember { mutableStateOf(if (record.storageLocation.startsWith("Person: ") && record.status == "Handed Back to Me") record.storageLocation.removePrefix("Person: ") else "") }
+    var handedBackPersonName by remember { mutableStateOf(if (record.storageLocation.startsWith("Person: ")) record.storageLocation.removePrefix("Person: ") else "") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Edit File Status & Location") },
+        title = { Text("Update Disposal & Location") },
         text = {
             Column {
-                Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text("Date: ${record.dispatchDate}", fontSize = 12.sp, color = MaterialTheme.colorScheme.outline)
-
+                Text("File: ${record.fileNo}", fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(10.dp))
 
-                Text("Category:", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = isDispatchedCategory,
-                        onClick = { 
-                            isDispatchedCategory = true 
-                            if (selectedStatus == "Not Sent to Court") selectedStatus = "Dispatched"
-                        },
-                        label = { Text("Dispatched") }
-                    )
-                    FilterChip(
-                        selected = !isDispatchedCategory,
-                        onClick = { 
-                            isDispatchedCategory = false 
-                            selectedStat
+                Text("Select Status:", fontSize = 14.sp)
+                
+                listOf("Taken Up", "Pass Over", "Handed Back to Me").forEach { statusOption ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp)
+                    ) {
+                        RadioButton(
+                            selected = (selectedStatus == statusOption),
+                            onClick = { selectedStatus = statusOption }
+                        )
+                        Text(text = statusOption)
+                    }
+                }
+
+                // Sub-options for Pass Over
+                if (selectedStatus == "Pass Over") {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text("Pass Over Location:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+
+                    listOf("Shelf", "Bundle", "Person").forEach { loc ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = (passOverChoice == loc),
+                                onClick = { passOverChoice = loc }
+                            )
+                            Text(loc)
+                        }
+                    }
+
+                    if (passOverChoice == "Bundle") {
+                        OutlinedTextField(
+                            value = passOverBundleNo,
+                            onValueChange = { passOverBundleNo = it },
+                            label = { Text("Bundle No. (e.g. 1 for B-1)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    if (passOverChoice == "Person") {
+                        OutlinedTextField(
+                            value = passOverPersonName,
+                            onValueChange = { passOverPersonName = it },
+                            label = { Text("Enter Person's Name") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+
+                // Sub-options for Handed Back to Me
+                if (selectedStatus == "Handed Back to Me") {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text("Handed Back Destination:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+
+                    val destinations = listOf("Listing Seat", "Compliance/Disposal Seat", "Shelf", "Person")
+                    destinations.forEach { dest ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = (handedBackChoice == dest),
+                                onClick = { handedBackChoice = dest }
+                            )
+                            Text(dest)
+                        }
+                    }
+
+                    if (handedBackChoice == "Person") {
+                        OutlinedTextField(
+                            value = handedBackPersonName,
+                            onValueChange = { handedBackPersonName = it },
+                            label = { Text("Enter Person's Name") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val finalLocation = when (selectedStatus) {
+                        "Pass Over" -> when (passOverChoice) {
+                            "Bundle" -> "B-${passOverBundleNo.trim()}"
+                            "Person" -> "Person: ${passOverPersonName.trim()}"
+                            else -> "Shelf"
+                        }
+                        "Handed Back to Me" -> if (handedBackChoice == "Person") "Person: ${handedBackPersonName.trim()}" else handedBackChoice
+                        else -> ""
+                    }
+                    
+                    onStatusSaved(selectedStatus, finalLocation)
+                }
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
