@@ -1,7 +1,16 @@
 package com.court.filetracker
 
+import androidx.room.Dao
+import androidx.room.Database
+import androidx.room.Entity
+import androidx.room.Index
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
+import androidx.room.Query
+import androidx.room.Room
+import androidx.room.RoomDatabase
 import android.content.Context
-import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 
 @Entity(
@@ -10,17 +19,18 @@ import kotlinx.coroutines.flow.Flow
 )
 data class FileRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val fileNo: String,                  // Unique Key (e.g. 1234/2026)
-    val dispatchDate: String,            // Active movement date (YYYY-MM-DD)
-    val courtNo: String = "N/A",         // Active Court No.
-    val serialNo: String = "",           // List Type & Serial No. (e.g. DCL - 15)
-    val status: String = "Dispatched",   // Active Status
-    val storageLocation: String = "",   // Active Location/Seat
-    val sentToChamber: Boolean = false,  // Active Chamber Flag
-    val judgeName: String = "",          // Hon'ble Judge Name
-    val remarks: String = "",            // Editable Case Notes
-    val historyLog: String = ""          // Append-Only Audit Stack Trace
+    val fileNo: String,
+    val dispatchDate: String,
+    val courtNo: String,
+    val serialNo: String,
+    val status: String = "Dispatched",
+    val storageLocation: String = "",
+    val sentToChamber: Boolean = false,
+    val judgeName: String = "",
+    val remarks: String = "",
+    val historyLog: String = ""
 )
+
 
 @Dao
 interface FileRecordDao {
