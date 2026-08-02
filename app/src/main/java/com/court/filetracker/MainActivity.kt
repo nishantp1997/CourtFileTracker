@@ -1,5 +1,6 @@
 package com.court.filetracker
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -8,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -18,6 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -26,6 +29,7 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val db = AppDatabase.getDatabase(this)
@@ -35,17 +39,30 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 MainAppScreen(
                     dao = dao,
+                    onGoogleDriveLogin = { DriveServiceHelper.requestDriveSignIn(this) },
                     onBackup = { DriveServiceHelper.performBackup(this) },
-                    onRestore = { DriveServiceHelper.performRestore(this) {} }
+                    onRestore = { DriveServiceHelper.performRestore(this, Runnable {}) }
                 )
             }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == DriveServiceHelper.RC_SIGN_IN) {
+            Toast.makeText(this, "Google Drive Account Authenticated!", Toast.LENGTH_SHORT).show()
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Unit) {
+fun MainAppScreen(
+    dao: FileRecordDao,
+    onGoogleDriveLogin: () -> Unit,
+    onBackup: () -> Unit,
+    onRestore: () -> Unit
+) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -63,13 +80,23 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
     var judgeNameInput by remember { mutableStateOf("") }
     var storageLocationInput by remember { mutableStateOf("Shelf") }
 
-    // Navigation & View States
-    var currentView by remember { mutableStateOf("MAIN") } // MAIN, SEARCH_DATE_COURT, BULK
+    // Dropdown State for "Not Sent" Mode
+    var locationDropdownExpanded by remember { mutableStateOf(false) }
+    val defaultLocations = listOf("Shelf", "Bundle", "Person", "Seat", "Chamber")
+
+    // Navigation Views: MAIN, SEARCH_DATE_COURT, BULK, REPORTS_PANEL
+    var currentView by remember { mutableStateOf("MAIN") }
     var searchDateInput by remember { mutableStateOf(currentDate) }
     var searchSelectedCourt by remember { mutableStateOf<String?>(null) }
     var globalKeywordSearch by remember { mutableStateOf("") }
 
-    // Bulk Mode States
+    // Report Generator Panel Specific States
+    var reportTargetFileNo by remember { mutableStateOf("") }
+    var reportTargetDate by remember { mutableStateOf(currentDate) }
+    var reportTargetCourtNo by remember { mutableStateOf("") }
+
+    // Bulk Operations Mode (Now supports Date + Court filtering)
+    var bulkDateInput by remember { mutableStateOf(currentDate) }
     var bulkCourtNo by remember { mutableStateOf("") }
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
     var selectedFileIds by remember { mutableStateOf(setOf<Long>()) }
@@ -82,6 +109,7 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
     val recordsList by dao.getRecordsByDate(dispatchDateInput).collectAsState(initial = emptyList())
     val searchCourtsList by dao.getCourtsByDate(searchDateInput).collectAsState(initial = emptyList())
     val searchCourtFiles by (searchSelectedCourt?.let { dao.getRecordsByDateAndCourt(searchDateInput, it) } ?: dao.getRecordsByDate(searchDateInput)).collectAsState(initial = emptyList())
+    val bulkCourtFiles by (if (bulkCourtNo.isNotBlank()) dao.getRecordsByDateAndCourt(bulkDateInput, bulkCourtNo) else dao.getRecordsByDate(bulkDateInput)).collectAsState(initial = emptyList())
     val globalSearchResults by dao.searchRecords(globalKeywordSearch).collectAsState(initial = emptyList())
     val allRecords by dao.getAllRecords().collectAsState(initial = emptyList())
 
@@ -106,15 +134,18 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                         icon = { Icon(Icons.Default.List, contentDescription = null) }
                     )
                     NavigationDrawerItem(
-                        label = { Text("📄 Master Database PDF Report") },
-                        selected = false,
-                        onClick = {
-                            PdfReportGenerator.generateMasterReport(context, allRecords)
-                            scope.launch { drawerState.close() }
-                        },
+                        label = { Text("📄 PDF Reports Engine") },
+                        selected = currentView == "REPORTS_PANEL",
+                        onClick = { currentView = "REPORTS_PANEL"; scope.launch { drawerState.close() } },
                         icon = { Icon(Icons.Default.Share, contentDescription = null) }
                     )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                    NavigationDrawerItem(
+                        label = { Text("🔑 Connect Google Drive") },
+                        selected = false,
+                        onClick = { onGoogleDriveLogin(); scope.launch { drawerState.close() } },
+                        icon = { Icon(Icons.Default.AccountCircle, contentDescription = null) }
+                    )
                     NavigationDrawerItem(
                         label = { Text("☁️ Google Drive Backup") },
                         selected = false,
@@ -138,7 +169,8 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                         Text(
                             when (currentView) {
                                 "SEARCH_DATE_COURT" -> "🔍 Search by Date & Court"
-                                "BULK" -> "⚡ Bulk Court Operations"
+                                "BULK" -> "⚡ Bulk Operations by Date & Court"
+                                "REPORTS_PANEL" -> "📄 Landscape PDF Reports"
                                 else -> "Allahabad High Court File Tracker"
                             },
                             fontSize = 16.sp
@@ -160,8 +192,80 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
         ) { padding ->
             Column(modifier = Modifier.padding(padding).padding(12.dp)) {
 
-                if (currentView == "SEARCH_DATE_COURT") {
-                    // STRUCTURED SEARCH VIEW: Filter by Date -> Select Court -> View Files
+                if (currentView == "REPORTS_PANEL") {
+                    // STANDALONE 3-OPTION REPORT LANDING PAGE
+                    Text("Select PDF Report Type (Legal Size Landscape):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
+
+                    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("1. Entire Database Report", fontWeight = FontWeight.Bold)
+                            Text("Generates complete master ledger with full audit stack traces.", fontSize = 12.sp, color = Color.Gray)
+                            Button(
+                                onClick = { PdfReportGenerator.generateMasterReport(context, allRecords) },
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                            ) {
+                                Text("EXPORT MASTER LEDGER PDF")
+                            }
+                        }
+                    }
+
+                    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("2. Particular Case File Report", fontWeight = FontWeight.Bold)
+                            OutlinedTextField(
+                                value = reportTargetFileNo,
+                                onValueChange = { reportTargetFileNo = it },
+                                label = { Text("File Number (e.g. 1234/2026)") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        val rec = dao.getRecordByFileNo(reportTargetFileNo.trim())
+                                        if (rec != null) {
+                                            PdfReportGenerator.generateSingleFileReport(context, rec)
+                                        } else {
+                                            Toast.makeText(context, "File Not Found!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                            ) {
+                                Text("EXPORT SINGLE CASE FILE PDF")
+                            }
+                        }
+                    }
+
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("3. Date & Court Number Wise Report", fontWeight = FontWeight.Bold)
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(value = reportTargetDate, onValueChange = { reportTargetDate = it }, label = { Text("Date (DD-MM-YY)") }, modifier = Modifier.weight(1f))
+                                OutlinedTextField(
+                                    value = reportTargetCourtNo,
+                                    onValueChange = { reportTargetCourtNo = it },
+                                    label = { Text("Court No") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        dao.getRecordsByDateAndCourt(reportTargetDate.trim(), reportTargetCourtNo.trim()).collect { recs ->
+                                            PdfReportGenerator.generateDateCourtReport(context, reportTargetDate.trim(), reportTargetCourtNo.trim(), recs)
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                            ) {
+                                Text("EXPORT COURT DISPATCH PDF")
+                            }
+                        }
+                    }
+
+                } else if (currentView == "SEARCH_DATE_COURT") {
+                    // STRUCTURED SEARCH VIEW
                     OutlinedTextField(
                         value = searchDateInput,
                         onValueChange = { searchDateInput = it; searchSelectedCourt = null },
@@ -186,13 +290,20 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                                     Column(modifier = Modifier.padding(12.dp)) {
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                             Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                            Badge { Text(record.status) }
+                                        }
+                                        Text("All Dates: ${record.dispatchDatesCsv}", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                        Text("Court: ${record.courtNo} | Location: ${record.storageLocation}", fontSize = 12.sp)
+                                        if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+
+                                        Row(modifier = Modifier.align(Alignment.End).padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             IconButton(onClick = { PdfReportGenerator.generateSingleFileReport(context, record) }) {
-                                                Icon(Icons.Default.Share, contentDescription = "Single Case PDF")
+                                                Icon(Icons.Default.Share, contentDescription = "PDF Sheet")
+                                            }
+                                            Button(onClick = { activeUpdateRecord = record }) {
+                                                Text("Update Status")
                                             }
                                         }
-                                        Text("Date: ${record.dispatchDate} | Court: ${record.courtNo} (${record.serialNo})", fontSize = 12.sp)
-                                        Text("Status: ${record.status} | Location: ${record.storageLocation}", fontSize = 12.sp)
-                                        if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
                                     }
                                 }
                             }
@@ -206,15 +317,6 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                                     onClick = { searchSelectedCourt = if (searchSelectedCourt == court) null else court },
                                     label = { Text("Court $court") }
                                 )
-                            }
-                        }
-
-                        if (searchSelectedCourt != null) {
-                            Button(
-                                onClick = { PdfReportGenerator.generateDateCourtReport(context, searchDateInput, searchSelectedCourt!!, searchCourtFiles) },
-                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-                            ) {
-                                Text("📄 Export Court ${searchSelectedCourt!!} PDF Report")
                             }
                         }
 
@@ -232,6 +334,15 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                                         Text("Court No: ${record.courtNo} | Serial: ${record.serialNo}", fontSize = 12.sp)
                                         if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
                                         if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+
+                                        Row(modifier = Modifier.align(Alignment.End).padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            IconButton(onClick = { PdfReportGenerator.generateSingleFileReport(context, record) }) {
+                                                Icon(Icons.Default.Share, contentDescription = "PDF Sheet")
+                                            }
+                                            Button(onClick = { activeUpdateRecord = record }) {
+                                                Text("Update Status")
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -239,19 +350,27 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                     }
 
                 } else if (currentView == "BULK") {
-                    // FUNCTIONAL BULK OPERATIONS VIEW
-                    Text("Select Court & Update All Files", fontWeight = FontWeight.Bold)
-                    OutlinedTextField(
-                        value = bulkCourtNo,
-                        onValueChange = { bulkCourtNo = it },
-                        label = { Text("Target Court No.") },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                    )
+                    // BULK OPERATIONS BY DATE & COURT
+                    Text("Select Date & Court No to Bulk Update", fontWeight = FontWeight.Bold)
 
-                    val bulkFiles = recordsList.filter { it.courtNo == bulkCourtNo && it.courtNo != "N/A" }
+                    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = bulkDateInput,
+                            onValueChange = { bulkDateInput = it },
+                            label = { Text("Dispatch Date (DD-MM-YY)") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = bulkCourtNo,
+                            onValueChange = { bulkCourtNo = it },
+                            label = { Text("Court No") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 8.dp)) {
-                        Button(onClick = { selectedFileIds = bulkFiles.map { it.id }.toSet() }) { Text("Select All") }
+                        Button(onClick = { selectedFileIds = bulkCourtFiles.map { it.id }.toSet() }) { Text("Select All") }
                         Button(onClick = { selectedFileIds = emptySet() }) { Text("Clear All") }
                     }
 
@@ -266,11 +385,11 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                         onClick = {
                             scope.launch {
                                 val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-                                val selectedRecords = bulkFiles.filter { selectedFileIds.contains(it.id) }
+                                val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
                                 val updatedList = selectedRecords.map { rec ->
                                     rec.copy(
                                         status = bulkTargetStatus,
-                                        historyLog = "${rec.historyLog}\n[$dispatchDateInput $time] Bulk Status changed to '$bulkTargetStatus'"
+                                        historyLog = "${rec.historyLog}\n[$bulkDateInput $time] Bulk Status changed to '$bulkTargetStatus'"
                                     )
                                 }
                                 dao.insertOrUpdateAll(updatedList)
@@ -284,7 +403,7 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                     }
 
                     LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        items(bulkFiles) { record ->
+                        items(bulkCourtFiles) { record ->
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                                 Checkbox(
                                     checked = selectedFileIds.contains(record.id),
@@ -298,7 +417,7 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                     }
 
                 } else {
-                    // Main Registration & Listing Screen
+                    // MAIN REGISTRATION SCREEN
                     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), elevation = CardDefaults.cardElevation(4.dp)) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text("☀️ Registration / Re-Dispatch", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -314,10 +433,15 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                                 value = dispatchDateInput,
                                 onValueChange = { dispatchDateInput = it },
                                 label = { Text("Dispatch Date (DD-MM-YY) *") },
+                                trailingIcon = {
+                                    TextButton(onClick = { dispatchDateInput = currentDate }) {
+                                        Text("Today", fontSize = 11.sp)
+                                    }
+                                },
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                             )
 
-                            // Mandatory File Number with Regex Rule [Number]/[Year]
+                            // Mandatory File Number [Number]/[Year]
                             OutlinedTextField(
                                 value = fileNoInput,
                                 onValueChange = { fileNoInput = it },
@@ -327,8 +451,20 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
 
                             if (selectedMode == "Dispatched") {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlinedTextField(value = courtNoInput, onValueChange = { courtNoInput = it }, label = { Text("Court No *") }, modifier = Modifier.weight(1f))
-                                    OutlinedTextField(value = serialNoInput, onValueChange = { serialNoInput = it }, label = { Text("Serial No *") }, modifier = Modifier.weight(1f))
+                                    OutlinedTextField(
+                                        value = courtNoInput,
+                                        onValueChange = { if (it.isEmpty() || it.toIntOrNull() != null) courtNoInput = it },
+                                        label = { Text("Court No (Integer) *") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = serialNoInput,
+                                        onValueChange = { if (it.isEmpty() || it.toFloatOrNull() != null) serialNoInput = it },
+                                        label = { Text("Serial No (Decimal) *") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.weight(1f)
+                                    )
                                 }
 
                                 Text("List Type *", fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
@@ -341,10 +477,32 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                             } else if (selectedMode == "Chamber") {
                                 OutlinedTextField(value = judgeNameInput, onValueChange = { judgeNameInput = it }, label = { Text("Hon'ble Judge Name *") }, modifier = Modifier.fillMaxWidth())
                             } else {
-                                OutlinedTextField(value = storageLocationInput, onValueChange = { storageLocationInput = it }, label = { Text("Storage Location (Shelf/Bundle/Person) *") }, modifier = Modifier.fillMaxWidth())
+                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                    OutlinedTextField(
+                                        value = storageLocationInput,
+                                        onValueChange = { storageLocationInput = it },
+                                        label = { Text("Storage Location *") },
+                                        trailingIcon = {
+                                            IconButton(onClick = { locationDropdownExpanded = true }) {
+                                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Location")
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    DropdownMenu(
+                                        expanded = locationDropdownExpanded,
+                                        onDismissRequest = { locationDropdownExpanded = false }
+                                    ) {
+                                        defaultLocations.forEach { loc ->
+                                            DropdownMenuItem(
+                                                text = { Text(loc) },
+                                                onClick = { storageLocationInput = loc; locationDropdownExpanded = false }
+                                            )
+                                        }
+                                    }
+                                }
                             }
 
-                            // Optional Remarks
                             OutlinedTextField(
                                 value = remarksInput,
                                 onValueChange = { remarksInput = it },
@@ -360,7 +518,9 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                                         return@Button
                                     }
 
-                                    if (dispatchDateInput.isBlank() || fileNoInput.isBlank()) {
+                                    val cleanDate = dispatchDateInput.trim()
+
+                                    if (cleanDate.isBlank() || fileNoInput.isBlank()) {
                                         Toast.makeText(context, "Please fill all mandatory fields (*)", Toast.LENGTH_SHORT).show()
                                         return@Button
                                     }
@@ -368,33 +528,37 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                                         Toast.makeText(context, "Court No and Serial No are mandatory!", Toast.LENGTH_SHORT).show()
                                         return@Button
                                     }
-                                    if (selectedMode == "Chamber" && judgeNameInput.isBlank()) {
-                                        Toast.makeText(context, "Judge Name is mandatory!", Toast.LENGTH_SHORT).show()
-                                        return@Button
-                                    }
 
                                     scope.launch {
-                                        val existing = dao.getRecordByFileNo(fileNoInput)
+                                        val existing = dao.getRecordByFileNo(fileNoInput.trim())
                                         val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                                         val newStatus = if (selectedMode == "Dispatched") "Dispatched" else if (selectedMode == "Chamber") "Sent to Chamber" else "Not Sent to Court"
                                         val isChamber = selectedMode == "Chamber"
                                         val judge = if (isChamber) judgeNameInput else ""
 
+                                        val existingCsv = existing?.dispatchDatesCsv ?: ""
+                                        val updatedCsv = when {
+                                            existingCsv.isBlank() -> cleanDate
+                                            existingCsv.contains(cleanDate) -> existingCsv
+                                            else -> "$existingCsv, $cleanDate"
+                                        }
+
                                         val logRemark = if (remarksInput.isNotBlank()) " | Remarks: $remarksInput" else ""
-                                        val entryLog = "[$dispatchDateInput $time] Registered as '$newStatus' ${if (isChamber) "($judge)" else ""}$logRemark"
+                                        val entryLog = "[$cleanDate $time] Registered as '$newStatus' ${if (isChamber) "($judge)" else ""}$logRemark"
                                         val updatedHistory = if (existing != null) "${existing.historyLog}\n$entryLog" else entryLog
 
                                         val record = FileRecord(
                                             id = existing?.id ?: 0,
-                                            fileNo = fileNoInput,
-                                            dispatchDate = dispatchDateInput,
-                                            courtNo = if (selectedMode == "Dispatched") courtNoInput else "N/A",
-                                            serialNo = if (selectedMode == "Dispatched") "$listTypeInput - $serialNoInput" else "",
+                                            fileNo = fileNoInput.trim(),
+                                            dispatchDate = cleanDate,
+                                            dispatchDatesCsv = updatedCsv,
+                                            courtNo = if (selectedMode == "Dispatched") courtNoInput.trim() else "N/A",
+                                            serialNo = if (selectedMode == "Dispatched") "$listTypeInput - ${serialNoInput.trim()}" else "",
                                             status = newStatus,
                                             storageLocation = if (isChamber) "Chamber: $judge" else storageLocationInput,
                                             sentToChamber = isChamber,
                                             judgeName = judge,
-                                            remarks = remarksInput, // No default string
+                                            remarks = remarksInput.trim(),
                                             historyLog = updatedHistory
                                         )
                                         dao.insertOrUpdateRecord(record)
@@ -440,7 +604,7 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
         }
     }
 
-    // Disposal Update Modal (Mandatory Delete Reason Enforcement)
+    // Disposal Update Modal
     val currentRecordForUpdate = activeUpdateRecord
     if (currentRecordForUpdate != null) {
         var newStatus by remember { mutableStateOf("Taken Up") }
@@ -492,7 +656,7 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
             },
             confirmButton = {
                 Button(
-                    enabled = isSaveEnabled, // Disables button if delete reason is empty
+                    enabled = isSaveEnabled,
                     onClick = {
                         scope.launch {
                             val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
