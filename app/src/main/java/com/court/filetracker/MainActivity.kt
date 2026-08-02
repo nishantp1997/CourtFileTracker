@@ -82,11 +82,6 @@ fun MainAppScreen(
 
     var remarksInput by remember { mutableStateOf("") }
     var judgeNameInput by remember { mutableStateOf("") }
-    var storageLocationInput by remember { mutableStateOf("") }
-
-    // Dropdown State
-    var locationDropdownExpanded by remember { mutableStateOf(false) }
-    val defaultLocations = listOf("Shelf", "Bundle", "Person", "Seat", "Chamber")
 
     // Navigation Views
     var currentView by remember { mutableStateOf("MAIN") }
@@ -116,16 +111,14 @@ fun MainAppScreen(
     val normalizedReportDate = remember(reportTargetDate) { normalizeDate(reportTargetDate) }
     val normalizedSearchFileNo = remember(searchFileNoInput) { normalizeSearchQuery(searchFileNoInput) }
 
-    // FIX: Extract Court No assigned SPECIFICALLY on targetDate from History Log
+    // Strictly extracts the Court No. assigned SPECIFICALLY on targetDate from History Log
     fun getCourtForDate(record: FileRecord, targetDate: String): String {
         val logLines = record.historyLog.split("\n")
-        // Find line logged on targetDate that contains Court No:
         val dateLine = logLines.firstOrNull { it.contains("[$targetDate]") && it.contains("Court No:") }
         if (dateLine != null) {
             val match = Regex("Court No:\\s*(\\d+)").find(dateLine)
             if (match != null) return stripLeadingZeros(match.groupValues[1])
         }
-        // Fallback if registered on that date
         return if (record.dispatchDate == targetDate && record.courtNo != "N/A") stripLeadingZeros(record.courtNo) else "N/A"
     }
 
@@ -602,10 +595,11 @@ fun MainAppScreen(
                                     val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
 
                                     val updatedList = selectedRecords.map { rec ->
-                                        // Keep historical court intact
                                         val logDetail = " | Court No: ${rec.courtNo} | Serial: ${rec.serialNo}"
                                         rec.copy(
                                             status = bulkTargetStatus,
+                                            // RULE ENFORCED: Reset storage location to empty string for all Bulk Operations updates
+                                            storageLocation = "",
                                             historyLog = "${rec.historyLog}\n[$normalizedBulkDate] Bulk Status changed to '$bulkTargetStatus'$logDetail"
                                         )
                                     }
@@ -701,32 +695,12 @@ fun MainAppScreen(
                                 }
 
                             } else if (selectedMode == "Chamber") {
-                                OutlinedTextField(value = judgeNameInput, onValueChange = { judgeNameInput = it }, label = { Text("Hon'ble Judge Name") }, modifier = Modifier.fillMaxWidth())
-                            } else {
-                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                                    OutlinedTextField(
-                                        value = storageLocationInput,
-                                        onValueChange = { storageLocationInput = it },
-                                        label = { Text("Storage Location") },
-                                        trailingIcon = {
-                                            IconButton(onClick = { locationDropdownExpanded = true }) {
-                                                Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Location")
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    DropdownMenu(
-                                        expanded = locationDropdownExpanded,
-                                        onDismissRequest = { locationDropdownExpanded = false }
-                                    ) {
-                                        defaultLocations.forEach { loc ->
-                                            DropdownMenuItem(
-                                                text = { Text(loc) },
-                                                onClick = { storageLocationInput = loc; locationDropdownExpanded = false }
-                                            )
-                                        }
-                                    }
-                                }
+                                OutlinedTextField(
+                                    value = judgeNameInput, 
+                                    onValueChange = { judgeNameInput = it }, 
+                                    label = { Text("Hon'ble Judge Name") }, 
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
 
                             OutlinedTextField(
@@ -798,7 +772,8 @@ fun MainAppScreen(
                                             courtNo = if (isChamber) "N/A" else cleanCourtNo,
                                             serialNo = if (isChamber) "" else serialFormatted,
                                             status = newStatus,
-                                            storageLocation = if (isChamber) "Chamber: $judge" else storageLocationInput.trim(),
+                                            // RULE ENFORCED: Always reset storage location to empty string ("") on Registration / Re-Dispatch
+                                            storageLocation = "",
                                             sentToChamber = isChamber,
                                             judgeName = if (isDispatched) "" else judge,
                                             remarks = remarksInput.trim(),
@@ -990,7 +965,6 @@ fun MainAppScreen(
                         }
 
                         scope.launch {
-                            // FIX: Preserve existing court and serial info in history log line during status updates
                             val courtInfoLog = if (currentRecordForUpdate.courtNo != "N/A") " | Court No: ${currentRecordForUpdate.courtNo} | Serial: ${currentRecordForUpdate.serialNo}" else ""
                             val logEntry = "[$dispatchDateInput] Status changed to '$newStatus'$courtInfoLog ${if (isDeleteMode) "Reason: $deleteReason" else "Loc: $locInput"}"
 
