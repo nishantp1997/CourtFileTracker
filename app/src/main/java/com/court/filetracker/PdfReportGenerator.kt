@@ -17,16 +17,19 @@ object PdfReportGenerator {
     private const val PAGE_WIDTH = 1008
     private const val PAGE_HEIGHT = 612
 
-    fun generateMasterReport(context: Context, records: List<FileRecord>) {
-        generatePdf(context, "MASTER DATABASE LEDGER WITH COMPLETE AUDIT TRAIL", records, isMaster = true)
+    fun generateMasterReport(context: Context, rawRecords: List<FileRecord>) {
+        val validRecords = rawRecords.filter { it.fileNo.isNotBlank() }
+        generatePdf(context, "MASTER DATABASE LEDGER WITH COMPLETE AUDIT TRAIL", validRecords, isMaster = true)
     }
 
     fun generateSingleFileReport(context: Context, record: FileRecord) {
+        if (record.fileNo.isBlank()) return
         generatePdf(context, "PARTICULAR CASE FILE HISTORY REPORT - ${record.fileNo}", listOf(record), isSingleFile = true)
     }
 
-    fun generateDateCourtReport(context: Context, date: String, courtNo: String, records: List<FileRecord>) {
-        generatePdf(context, "DAILY COURT DISPATCH REPORT - COURT NO. $courtNo ($date)", records, isDateCourt = true)
+    fun generateDateCourtReport(context: Context, date: String, courtNo: String, rawRecords: List<FileRecord>) {
+        val validRecords = rawRecords.filter { it.fileNo.isNotBlank() }
+        generatePdf(context, "DAILY COURT DISPATCH REPORT - COURT NO. $courtNo ($date)", validRecords, isDateCourt = true)
     }
 
     private fun generatePdf(
@@ -88,7 +91,6 @@ object PdfReportGenerator {
             }
 
         } else if (isMaster) {
-            // Master Report: Multi-line Audit Stack Trace Wrapping (No Data Cutting)
             canvas.drawRect(35f, y, 973f, y + 20f, headerBgPaint)
             canvas.drawText("File No.", 40f, y + 14f, headerPaint)
             canvas.drawText("Active Status & Location", 160f, y + 14f, headerPaint)
@@ -120,7 +122,6 @@ object PdfReportGenerator {
                         canvas = page.canvas
                         lineY = 40f
                     }
-                    // Wraps long trace entries into 65-char chunks so no text gets cut off
                     line.chunked(65).forEach { chunk ->
                         canvas.drawText(chunk, 550f, lineY, paint)
                         lineY += 13f
@@ -133,7 +134,6 @@ object PdfReportGenerator {
             }
 
         } else if (isDateCourt) {
-            // Date & Court Report: Omit Audit Stack Trace, Expand Column Widths
             canvas.drawRect(35f, y, 973f, y + 20f, headerBgPaint)
             canvas.drawText("S.No", 40f, y + 14f, headerPaint)
             canvas.drawText("File No.", 90f, y + 14f, headerPaint)
