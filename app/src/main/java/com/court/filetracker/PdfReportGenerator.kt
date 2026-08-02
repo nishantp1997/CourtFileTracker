@@ -152,14 +152,14 @@ object PdfReportGenerator {
             }
 
         } else if (isMaster) {
-            // Master Report - Check column availability across all rows
-            val hasStatus = records.any { (it.status == "Entry Deleted" ? "[DELETED]" : "${it.status} (${it.storageLocation.ifEmpty { "Court " + it.courtNo }})").isNotBlank() }
+            // Master Report - Check column availability across all rows using Kotlin if-expression
+            val hasStatus = records.any { (if (it.status == "Entry Deleted") "[DELETED]" else "${it.status} (${it.storageLocation.ifEmpty { "Court " + it.courtNo }})").isNotBlank() }
             val hasDates = records.any { it.dispatchDatesCsv.isNotBlank() }
             val hasHistory = records.any { it.historyLog.isNotBlank() }
 
             // Dynamic Column Positions & Widths Calculation
             val totalUsableWidth = MARGIN_RIGHT - MARGIN_LEFT // 938 pt
-            var flexWidth = totalUsableWidth - 120f // FileNo gets fixed 120 pt
+            val flexWidth = totalUsableWidth - 120f // FileNo gets fixed 120 pt
             var activeColsCount = 0
             if (hasStatus) activeColsCount++
             if (hasDates) activeColsCount++
@@ -228,13 +228,12 @@ object PdfReportGenerator {
             }
 
         } else if (isDateCourt) {
-            // Date & Court Report - Omit empty columns across the dataset
             val hasSerial = records.any { it.serialNo.isNotBlank() && it.serialNo != "N/A" }
             val hasLoc = records.any { (if (it.sentToChamber) "Chamber: ${it.judgeName}" else it.storageLocation.ifEmpty { it.status }).isNotBlank() }
             val hasRemarks = records.any { it.remarks.isNotBlank() }
 
-            val fixedWidth = 45f + 120f // S.No (45pt) + FileNo (120pt)
-            val availableWidth = (MARGIN_RIGHT - MARGIN_LEFT) - fixedWidth // Remaining width dynamically divided
+            val fixedWidth = 45f + 120f
+            val availableWidth = (MARGIN_RIGHT - MARGIN_LEFT) - fixedWidth
 
             var activeDynamicCols = 0
             if (hasSerial) activeDynamicCols++
