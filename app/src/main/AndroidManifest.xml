@@ -4,8 +4,7 @@
     <application
         android:allowBackup="true"
         android:label="Court File Movement"
-        android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:supportsRtl="true">
         <activity
             android:name=".MainActivity"
             android:exported="true">
