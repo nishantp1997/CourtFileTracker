@@ -74,7 +74,7 @@ object PdfReportGenerator {
                     lineY += 12f
                 }
                 y = maxOf(y + 20f, lineY + 5f)
-                canvas.drawLine(40f, y - 5f, 555f, y - 5f, Paint().apply { color = Color.LIGHTGRAY })
+                canvas.drawLine(40f, y - 5f, 555f, y - 5f, Paint().apply { color = Color.LTGRAY })
             }
         } else {
             canvas.drawText("S.No", 40f, y, headerPaint)
