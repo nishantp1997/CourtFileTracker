@@ -101,6 +101,11 @@ fun MainAppScreen(
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
     var selectedFileIds by remember { mutableStateOf(setOf<Long>()) }
 
+    // NEW: Bulk Location Screen States
+    var bulkLocationCategory by remember { mutableStateOf("PASS_OVER") }
+    var bulkLocSelectedIds by remember { mutableStateOf(setOf<Long>()) }
+    var showSetLocationDialog by remember { mutableStateOf(false) }
+
     // Dialog States
     var activeTraceRecord by remember { mutableStateOf<FileRecord?>(null) }
     var activeUpdateRecord by remember { mutableStateOf<FileRecord?>(null) }
@@ -167,6 +172,20 @@ fun MainAppScreen(
     val chamberFiles = remember(allDbRecords) { allDbRecords.filter { it.sentToChamber || it.status.contains("Chamber", ignoreCase = true) } }
     val takenUpFiles = remember(allDbRecords) { allDbRecords.filter { it.status == "Taken Up" } }
 
+    // NEW: Bulk Location Data Filter Rules
+    val bulkLocationFilteredFiles = remember(allDbRecords, bulkLocationCategory) {
+        allDbRecords.filter { rec ->
+            val isLocEmpty = rec.storageLocation.isBlank() || rec.storageLocation.trim().equals("N/A", ignoreCase = true)
+            val matchesStatus = when (bulkLocationCategory) {
+                "PASS_OVER" -> rec.status == "Pass Over"
+                "NOT_SENT" -> rec.status == "Not Sent to Court"
+                "RECEIVED" -> rec.status == "Received from Court"
+                else -> false
+            }
+            matchesStatus && isLocEmpty
+        }
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -195,6 +214,16 @@ fun MainAppScreen(
                             scope.launch { drawerState.close() } 
                         },
                         icon = { Icon(Icons.Default.List, contentDescription = null) }
+                    )
+                    NavigationDrawerItem(
+                        label = { Text("Bulk Location") },
+                        selected = currentView == "BULK_LOCATION",
+                        onClick = {
+                            currentView = "BULK_LOCATION"
+                            bulkLocSelectedIds = emptySet()
+                            scope.launch { drawerState.close() }
+                        },
+                        icon = { Icon(Icons.Default.Place, contentDescription = null) }
                     )
                     NavigationDrawerItem(
                         label = { Text("PDF Reports Engine") },
@@ -237,6 +266,7 @@ fun MainAppScreen(
                             when (currentView) {
                                 "SEARCH_MENU" -> "Search & Filter Engine"
                                 "BULK" -> "Bulk Operations by Date & Court"
+                                "BULK_LOCATION" -> "Bulk Location Management"
                                 "REPORTS_PANEL" -> "PDF Reports Engine"
                                 else -> "Allahabad High Court File Tracker"
                             },
@@ -263,7 +293,113 @@ fun MainAppScreen(
         ) { padding ->
             Column(modifier = Modifier.padding(padding).padding(12.dp)) {
 
-                if (currentView == "SEARCH_MENU") {
+                if (currentView == "BULK_LOCATION") {
+                    // NEW: BULK LOCATION VIEW IMPLEMENTATION
+                    Text("Select Unassigned Category:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FilterChip(
+                            selected = bulkLocationCategory == "PASS_OVER",
+                            onClick = { bulkLocationCategory = "PASS_OVER"; bulkLocSelectedIds = emptySet() },
+                            label = { Text("1. Pass Over Files", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = bulkLocationCategory == "NOT_SENT",
+                            onClick = { bulkLocationCategory = "NOT_SENT"; bulkLocSelectedIds = emptySet() },
+                            label = { Text("2. Not Sent Files", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = bulkLocationCategory == "RECEIVED",
+                            onClick = { bulkLocationCategory = "RECEIVED"; bulkLocSelectedIds = emptySet() },
+                            label = { Text("3. Received Files", fontSize = 11.sp) }
+                        )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { bulkLocSelectedIds = bulkLocationFilteredFiles.map { it.id }.toSet() }) {
+                                Text("Select All", fontSize = 12.sp)
+                            }
+                            Button(onClick = { bulkLocSelectedIds = emptySet() }) {
+                                Text("Clear All", fontSize = 12.sp)
+                            }
+                        }
+
+                        Button(
+                            enabled = bulkLocSelectedIds.isNotEmpty(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            onClick = { showSetLocationDialog = true }
+                        ) {
+                            Text("Set Location (${bulkLocSelectedIds.size})", fontSize = 12.sp)
+                        }
+                    }
+
+                    Text(
+                        "Unassigned Files (${bulkLocationFilteredFiles.size}):",
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+
+                    if (bulkLocationFilteredFiles.isEmpty()) {
+                        Text(
+                            "No files found with status '${
+                                when (bulkLocationCategory) {
+                                    "PASS_OVER" -> "Pass Over"
+                                    "NOT_SENT" -> "Not Sent to Court"
+                                    else -> "Received from Court"
+                                }
+                            }' having an empty storage location.",
+                            fontSize = 12.sp,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(top = 16.dp)
+                        )
+                    } else {
+                        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            items(bulkLocationFilteredFiles) { record ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().clickable {
+                                        bulkLocSelectedIds = if (bulkLocSelectedIds.contains(record.id)) {
+                                            bulkLocSelectedIds - record.id
+                                        } else {
+                                            bulkLocSelectedIds + record.id
+                                        }
+                                    },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(8.dp).fillMaxWidth()
+                                    ) {
+                                        Checkbox(
+                                            checked = bulkLocSelectedIds.contains(record.id),
+                                            onCheckedChange = { isChecked ->
+                                                bulkLocSelectedIds = if (isChecked) {
+                                                    bulkLocSelectedIds + record.id
+                                                } else {
+                                                    bulkLocSelectedIds - record.id
+                                                }
+                                            }
+                                        )
+                                        Column(modifier = Modifier.padding(start = 8.dp)) {
+                                            Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                            Text("Status: ${record.status} | Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
+                                            if (record.remarks.isNotBlank()) {
+                                                Text("Remarks: ${record.remarks}", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                } else if (currentView == "SEARCH_MENU") {
                     Text("Select Search Method:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
 
                     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -598,7 +734,6 @@ fun MainAppScreen(
                                         val logDetail = " | Court No: ${rec.courtNo} | Serial: ${rec.serialNo}"
                                         rec.copy(
                                             status = bulkTargetStatus,
-                                            // RULE ENFORCED: Reset storage location to empty string for all Bulk Operations updates
                                             storageLocation = "",
                                             historyLog = "${rec.historyLog}\n[$normalizedBulkDate] Bulk Status changed to '$bulkTargetStatus'$logDetail"
                                         )
@@ -772,7 +907,6 @@ fun MainAppScreen(
                                             courtNo = if (isChamber) "N/A" else cleanCourtNo,
                                             serialNo = if (isChamber) "" else serialFormatted,
                                             status = newStatus,
-                                            // RULE ENFORCED: Always reset storage location to empty string ("") on Registration / Re-Dispatch
                                             storageLocation = "",
                                             sentToChamber = isChamber,
                                             judgeName = if (isDispatched) "" else judge,
@@ -828,6 +962,93 @@ fun MainAppScreen(
                 }
             }
         }
+    }
+
+    // NEW: SET BULK LOCATION DIALOG IMPLEMENTATION
+    if (showSetLocationDialog) {
+        var inputLocText by remember { mutableStateOf("") }
+        var dropdownExpanded by remember { mutableStateOf(false) }
+        val receivedOptions = listOf("Listing Seat", "Disposal/Compliance Seat", "Shelf")
+
+        if (bulkLocationCategory == "RECEIVED" && inputLocText.isEmpty()) {
+            inputLocText = "Listing Seat"
+        }
+
+        AlertDialog(
+            onDismissRequest = { showSetLocationDialog = false },
+            title = { Text("Set Storage Location (${bulkLocSelectedIds.size} Files)") },
+            text = {
+                Column {
+                    Text("Specify the location to assign to all selected files:")
+
+                    if (bulkLocationCategory == "RECEIVED") {
+                        Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                            OutlinedTextField(
+                                value = inputLocText,
+                                onValueChange = { inputLocText = it },
+                                label = { Text("Select Target Seat / Shelf *") },
+                                readOnly = true,
+                                trailingIcon = {
+                                    IconButton(onClick = { dropdownExpanded = true }) {
+                                        Icon(Icons.Default.ArrowDropDown, contentDescription = "Dropdown")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            DropdownMenu(
+                                expanded = dropdownExpanded,
+                                onDismissRequest = { dropdownExpanded = false }
+                            ) {
+                                receivedOptions.forEach { opt ->
+                                    DropdownMenuItem(
+                                        text = { Text(opt) },
+                                        onClick = {
+                                            inputLocText = opt
+                                            dropdownExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = inputLocText,
+                            onValueChange = { inputLocText = it },
+                            label = { Text("Enter Location (e.g. Bundle No., Shelf, Person)") },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = inputLocText.isNotBlank(),
+                    onClick = {
+                        scope.launch {
+                            val selectedTargets = bulkLocationFilteredFiles.filter { bulkLocSelectedIds.contains(it.id) }
+                            val updated = selectedTargets.map { rec ->
+                                val logEntry = "[$currentDate] Bulk Location updated to '$inputLocText'"
+                                rec.copy(
+                                    storageLocation = inputLocText.trim(),
+                                    historyLog = "${rec.historyLog}\n$logEntry"
+                                )
+                            }
+                            dao.insertOrUpdateAll(updated)
+                            bulkLocSelectedIds = emptySet()
+                            showSetLocationDialog = false
+                            Toast.makeText(context, "${updated.size} Files Location Updated!", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) {
+                    Text("Save Location")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSetLocationDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     // DISPOSAL UPDATE MODAL WITH MANDATORY RECEIVED LOCATION SELECTION
