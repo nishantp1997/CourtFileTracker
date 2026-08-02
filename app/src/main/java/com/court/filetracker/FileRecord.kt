@@ -11,8 +11,9 @@ data class FileRecord(
     val courtNo: String,      
     val serialNo: String,     
     val fileNo: String,
-    val status: String = "Dispatched", // Dispatched, Taken Up, Pass Over, Handed Back to Me, Not Sent to Court
-    val storageLocation: String = ""   // Shelf, B-1, Person: Name, Listing Seat, etc.
+    val status: String = "Dispatched", // Dispatched, Taken Up, Pass Over, Handed Back to Me, Not Sent to Court, Entry Deleted
+    val storageLocation: String = "",
+    val historyLog: String = ""        // Audit history stack trace
 )
 
 @Dao
@@ -26,11 +27,17 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records WHERE dispatchDate = :date ORDER BY courtNo ASC")
     fun getRecordsByDate(date: String): Flow<List<FileRecord>>
 
+    @Query("SELECT DISTINCT courtNo FROM file_records WHERE dispatchDate = :date AND status != 'Entry Deleted' ORDER BY courtNo ASC")
+    fun getCourtsByDate(date: String): Flow<List<String>>
+
+    @Query("SELECT * FROM file_records WHERE dispatchDate = :date AND courtNo = :courtNo ORDER BY id ASC")
+    fun getRecordsByDateAndCourt(date: String, courtNo: String): Flow<List<FileRecord>>
+
     @Query("SELECT * FROM file_records WHERE fileNo LIKE '%' || :query || '%' OR courtNo LIKE '%' || :query || '%' OR status LIKE '%' || :query || '%' OR storageLocation LIKE '%' || :query || '%' ORDER BY dispatchDate DESC")
     fun searchRecords(query: String): Flow<List<FileRecord>>
 }
 
-@Database(entities = [FileRecord::class], version = 1, exportSchema = false)
+@Database(entities = [FileRecord::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileRecordDao(): FileRecordDao
 
@@ -44,7 +51,9 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "court_file_tracker_db"
-                ).build()
+                )
+                .fallbackToDestructiveMigration()
+                .build()
                 INSTANCE = instance
                 instance
             }
