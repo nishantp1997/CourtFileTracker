@@ -77,7 +77,6 @@ fun MainAppScreen(
     var listTypeInput by remember { mutableStateOf("DCL") }
     var serialNoInput by remember { mutableStateOf("") }
     
-    // Rule 4: Split Case Number and Year Input Boxes
     var fileSerialInput by remember { mutableStateOf("") }
     var fileYearInput by remember { mutableStateOf("2026") }
 
@@ -117,14 +116,16 @@ fun MainAppScreen(
     val normalizedReportDate = remember(reportTargetDate) { normalizeDate(reportTargetDate) }
     val normalizedSearchFileNo = remember(searchFileNoInput) { normalizeSearchQuery(searchFileNoInput) }
 
-    // Master Historical Helper: Extracts which court a record was dispatched to on a SPECIFIC target date
+    // FIX: Extract Court No assigned SPECIFICALLY on targetDate from History Log
     fun getCourtForDate(record: FileRecord, targetDate: String): String {
         val logLines = record.historyLog.split("\n")
-        val dateLine = logLines.lastOrNull { it.contains("[$targetDate]") && it.contains("Court No:") }
+        // Find line logged on targetDate that contains Court No:
+        val dateLine = logLines.firstOrNull { it.contains("[$targetDate]") && it.contains("Court No:") }
         if (dateLine != null) {
             val match = Regex("Court No:\\s*(\\d+)").find(dateLine)
             if (match != null) return stripLeadingZeros(match.groupValues[1])
         }
+        // Fallback if registered on that date
         return if (record.dispatchDate == targetDate && record.courtNo != "N/A") stripLeadingZeros(record.courtNo) else "N/A"
     }
 
@@ -141,7 +142,7 @@ fun MainAppScreen(
         else rawDateRecords.filter { getCourtForDate(it, normalizedSearchDate) == searchSelectedCourt }
     }
 
-    // Bulk Operations Data Flows (Date First, Courts as Filter Chips)
+    // Bulk Operations Data Flows
     val rawBulkDateRecords by dao.getRecordsByDate(normalizedBulkDate).collectAsState(initial = emptyList())
     val bulkCourtsList = remember(rawBulkDateRecords, normalizedBulkDate) {
         rawBulkDateRecords.map { getCourtForDate(it, normalizedBulkDate) }
@@ -154,7 +155,7 @@ fun MainAppScreen(
         else rawBulkDateRecords.filter { getCourtForDate(it, normalizedBulkDate) == bulkSelectedCourtChip }
     }
 
-    // PDF Reports Panel Data Flows (Date First, Courts as Filter Chips)
+    // PDF Reports Panel Data Flows
     val rawReportDateRecords by dao.getRecordsByDate(normalizedReportDate).collectAsState(initial = emptyList())
     val reportCourtsList = remember(rawReportDateRecords, normalizedReportDate) {
         rawReportDateRecords.map { getCourtForDate(it, normalizedReportDate) }
@@ -318,7 +319,6 @@ fun MainAppScreen(
                                 }
                             }
 
-                            // Rule 2: Strict Hide until Court Chip selected
                             if (searchSelectedCourt == null) {
                                 Text("Please select a Court Number chip above to view case files.", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
                             } else {
@@ -363,7 +363,6 @@ fun MainAppScreen(
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                             )
 
-                            // Rule 2: Strict Hide until text is typed
                             if (searchFileNoInput.isBlank()) {
                                 Text("Please enter a file number above to search.", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
                             } else {
@@ -513,7 +512,6 @@ fun MainAppScreen(
                         }
                     }
 
-                    // Rule 3: Date First -> Court Chips for PDF Report Engine
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text("3. Date & Court Number Wise Report", fontWeight = FontWeight.Bold)
@@ -555,7 +553,6 @@ fun MainAppScreen(
                     }
 
                 } else if (currentView == "BULK") {
-                    // Rule 3: Date First -> Court Chips for Bulk Operations
                     Text("Bulk Operations", fontWeight = FontWeight.Bold)
 
                     OutlinedTextField(
@@ -605,6 +602,7 @@ fun MainAppScreen(
                                     val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
 
                                     val updatedList = selectedRecords.map { rec ->
+                                        // Keep historical court intact
                                         val logDetail = " | Court No: ${rec.courtNo} | Serial: ${rec.serialNo}"
                                         rec.copy(
                                             status = bulkTargetStatus,
@@ -660,7 +658,6 @@ fun MainAppScreen(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                             )
 
-                            // Rule 4: Split Mandatory Case Number and Year Input Fields
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedTextField(
                                     value = fileSerialInput,
@@ -741,17 +738,16 @@ fun MainAppScreen(
 
                             Button(
                                 onClick = {
-                                    // Rule 4 Validation: Serial No integer & Year >= 1970
                                     val serialInt = fileSerialInput.trim().toIntOrNull()
                                     val yearInt = fileYearInput.trim().toIntOrNull()
 
                                     if (serialInt == null || serialInt <= 0) {
-                                        Toast.makeText(context, "Invalid File Serial Number! Must be an integer.", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "Invalid File Serial Number!", Toast.LENGTH_LONG).show()
                                         return@Button
                                     }
 
                                     if (yearInt == null || yearInt < 1970 || yearInt > 2026) {
-                                        Toast.makeText(context, "Invalid File Year! Must be a 4-digit year between 1970 and 2026.", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "Invalid File Year!", Toast.LENGTH_LONG).show()
                                         return@Button
                                     }
 
@@ -766,7 +762,7 @@ fun MainAppScreen(
                                         return@Button
                                     }
                                     if (selectedMode == "Dispatched" && (courtNoInput.isBlank() || serialNoInput.isBlank())) {
-                                        Toast.makeText(context, "Court No and Serial No are required for Dispatched files", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Court No and Serial No are required", Toast.LENGTH_SHORT).show()
                                         return@Button
                                     }
 
@@ -810,7 +806,6 @@ fun MainAppScreen(
                                         )
                                         dao.insertOrUpdateRecord(record)
 
-                                        // Rule 5: Keep Date, Court No, File Year. Reset Serial No, List Serial, Remarks.
                                         fileSerialInput = ""
                                         serialNoInput = ""
                                         remarksInput = ""
@@ -825,7 +820,6 @@ fun MainAppScreen(
                         }
                     }
 
-                    // Rule 1: Display ONLY the Last 2 Entries
                     val recentTwoFiles = remember(allDbRecords) { allDbRecords.sortedByDescending { it.id }.take(2) }
                     Text("Last 2 Registered / Updated Files:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
                     
@@ -996,6 +990,7 @@ fun MainAppScreen(
                         }
 
                         scope.launch {
+                            // FIX: Preserve existing court and serial info in history log line during status updates
                             val courtInfoLog = if (currentRecordForUpdate.courtNo != "N/A") " | Court No: ${currentRecordForUpdate.courtNo} | Serial: ${currentRecordForUpdate.serialNo}" else ""
                             val logEntry = "[$dispatchDateInput] Status changed to '$newStatus'$courtInfoLog ${if (isDeleteMode) "Reason: $deleteReason" else "Loc: $locInput"}"
 
