@@ -32,12 +32,11 @@ object PdfReportGenerator {
 
     fun generateDateCourtReport(context: Context, date: String, courtNo: String, rawRecords: List<FileRecord>) {
         val validRecords = rawRecords.filter { it.fileNo.isNotBlank() }
-        generatePdf(context, "DAILY COURT DISPATCH REPORT - COURT NO. $courtNo ($date)", validRecords, dateContext = date, isDateCourt = true)
+        generatePdf(context, "DAILY COURT DISPATCH REPORT - COURT NO. $courtNo ($date)", validRecords, isDateCourt = true)
     }
 
-    // Dynamic Multi-Line Text Wrapper
     private fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> {
-        if (text.isBlank()) return emptyList()
+        if (text.isBlank()) return listOf("")
         val words = text.split(" ")
         val lines = mutableListOf<String>()
         var currentLine = StringBuilder()
@@ -70,31 +69,17 @@ object PdfReportGenerator {
         if (currentLine.isNotEmpty()) {
             lines.add(currentLine.toString())
         }
-        return lines.ifEmpty { listOf("") }
-    }
-
-    // Helper: Extracts historical serial number logged on targetDate
-    private fun getHistoricalSerialNo(record: FileRecord, targetDate: String): String {
-        val logLines = record.historyLog.split("\n")
-        val dateLine = logLines.lastOrNull { it.contains("[$targetDate]") && it.contains("Serial:") }
-        if (dateLine != null) {
-            val match = Regex("Serial:\\s*([^|]+)").find(dateLine)
-            if (match != null) return match.groupValues[1].trim()
-        }
-        return record.serialNo.ifEmpty { "N/A" }
+        return lines
     }
 
     private fun generatePdf(
         context: Context,
         reportTitle: String,
         records: List<FileRecord>,
-        dateContext: String = "",
         isMaster: Boolean = false,
         isSingleFile: Boolean = false,
         isDateCourt: Boolean = false
     ) {
-        if (records.isEmpty() && !isSingleFile) return
-
         val pdfDocument = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, 1).create()
         var page = pdfDocument.startPage(pageInfo)
@@ -118,6 +103,23 @@ object PdfReportGenerator {
             return y + 14f
         }
 
+        fun drawTableHeader(currentCanvas: android.graphics.Canvas, currentY: Float): Float {
+            currentCanvas.drawRect(MARGIN_LEFT, currentY, MARGIN_RIGHT, currentY + 22f, headerBgPaint)
+            if (isMaster) {
+                currentCanvas.drawText("File No.", 40f, currentY + 15f, headerPaint)
+                currentCanvas.drawText("Active Status & Location", 160f, currentY + 15f, headerPaint)
+                currentCanvas.drawText("All Dispatch Dates", 380f, currentY + 15f, headerPaint)
+                currentCanvas.drawText("Complete Audit Stack Trace Log", 550f, currentY + 15f, headerPaint)
+            } else if (isDateCourt) {
+                currentCanvas.drawText("S.No", 40f, currentY + 15f, headerPaint)
+                currentCanvas.drawText("File No.", 85f, currentY + 15f, headerPaint)
+                currentCanvas.drawText("List Type & Serial No.", 210f, currentY + 15f, headerPaint)
+                currentCanvas.drawText("Current Status / Storage Location", 410f, currentY + 15f, headerPaint)
+                currentCanvas.drawText("Remarks / Case Notes", 700f, currentY + 15f, headerPaint)
+            }
+            return currentY + 22f
+        }
+
         var y = drawHeader(canvas, 35f)
 
         if (isSingleFile && records.isNotEmpty()) {
@@ -126,23 +128,14 @@ object PdfReportGenerator {
             y += 18f
             canvas.drawText("Current Status: ${record.status}", MARGIN_LEFT, y, boldPaint)
             y += 15f
-            if (record.courtNo.isNotBlank() && record.courtNo != "N/A") {
-                canvas.drawText("Court No: ${record.courtNo} | Serial/List: ${record.serialNo}", MARGIN_LEFT, y, paint)
-                y += 15f
-            }
-            if (record.storageLocation.isNotBlank()) {
-                canvas.drawText("Storage Location: ${record.storageLocation}", MARGIN_LEFT, y, paint)
-                y += 15f
-            }
-            if (record.dispatchDatesCsv.isNotBlank()) {
-                canvas.drawText("All Historical Dispatch Dates: ${record.dispatchDatesCsv}", MARGIN_LEFT, y, paint)
-                y += 15f
-            }
-            if (record.remarks.isNotBlank()) {
-                canvas.drawText("Remarks: ${record.remarks}", MARGIN_LEFT, y, paint)
-                y += 15f
-            }
-            y += 5f
+            canvas.drawText("Court No: ${record.courtNo} | Serial/List: ${record.serialNo}", MARGIN_LEFT, y, paint)
+            y += 15f
+            canvas.drawText("Storage Location: ${record.storageLocation.ifEmpty { "N/A" }}", MARGIN_LEFT, y, paint)
+            y += 15f
+            canvas.drawText("All Historical Dispatch Dates: ${record.dispatchDatesCsv}", MARGIN_LEFT, y, paint)
+            y += 15f
+            canvas.drawText("Remarks: ${record.remarks.ifEmpty { "None" }}", MARGIN_LEFT, y, paint)
+            y += 18f
             canvas.drawLine(MARGIN_LEFT, y, MARGIN_RIGHT, y, borderPaint)
             y += 18f
             canvas.drawText("Complete Audit Stack Trace Log:", MARGIN_LEFT, y, titlePaint)
@@ -164,52 +157,19 @@ object PdfReportGenerator {
             }
 
         } else if (isMaster) {
-            val hasStatus = records.any { (if (it.status == "Entry Deleted") "[DELETED]" else "${it.status} (${it.storageLocation.ifEmpty { "Court " + it.courtNo }})").isNotBlank() }
-            val hasDates = records.any { it.dispatchDatesCsv.isNotBlank() }
-            val hasHistory = records.any { it.historyLog.isNotBlank() }
-
-            val totalUsableWidth = MARGIN_RIGHT - MARGIN_LEFT
-            val flexWidth = totalUsableWidth - 120f
-            var activeColsCount = 0
-            if (hasStatus) activeColsCount++
-            if (hasDates) activeColsCount++
-            if (hasHistory) activeColsCount++
-
-            val perColWidth = if (activeColsCount > 0) flexWidth / activeColsCount else flexWidth
-
-            var statusX = 0f
-            var datesX = 0f
-            var historyX = 0f
-            var currX = 40f + 120f
-
-            if (hasStatus) { statusX = currX; currX += perColWidth }
-            if (hasDates) { datesX = currX; currX += perColWidth }
-            if (hasHistory) { historyX = currX }
-
-            fun drawMasterTableHeader(currentCanvas: android.graphics.Canvas, currentY: Float): Float {
-                currentCanvas.drawRect(MARGIN_LEFT, currentY, MARGIN_RIGHT, currentY + 22f, headerBgPaint)
-                currentCanvas.drawText("File No.", 40f, currentY + 15f, headerPaint)
-                if (hasStatus) currentCanvas.drawText("Active Status & Location", statusX, currentY + 15f, headerPaint)
-                if (hasDates) currentCanvas.drawText("All Dispatch Dates", datesX, currentY + 15f, headerPaint)
-                if (hasHistory) currentCanvas.drawText("Complete Audit Stack Trace Log", historyX, currentY + 15f, headerPaint)
-                return currentY + 22f
-            }
-
-            y = drawMasterTableHeader(canvas, y)
+            y = drawTableHeader(canvas, y)
 
             records.forEachIndexed { idx, record ->
                 val statusText = if (record.status == "Entry Deleted") "[DELETED]" else "${record.status} (${record.storageLocation.ifEmpty { "Court " + record.courtNo }})"
-
+                
                 val col1Lines = wrapText(record.fileNo, boldPaint, 110f)
-                val col2Lines = if (hasStatus) wrapText(statusText, paint, perColWidth - 15f) else emptyList()
-                val col3Lines = if (hasDates) wrapText(record.dispatchDatesCsv, paint, perColWidth - 15f) else emptyList()
-
+                val col2Lines = wrapText(statusText, paint, 210f)
+                val col3Lines = wrapText(record.dispatchDatesCsv, paint, 160f)
+                
+                val historyRaw = record.historyLog.split("\n").filter { it.isNotBlank() }
                 val col4Lines = mutableListOf<String>()
-                if (hasHistory) {
-                    val historyRaw = record.historyLog.split("\n").filter { it.isNotBlank() }
-                    historyRaw.forEach { hLine ->
-                        col4Lines.addAll(wrapText(hLine, paint, perColWidth - 15f))
-                    }
+                historyRaw.forEach { hLine ->
+                    col4Lines.addAll(wrapText(hLine, paint, 415f))
                 }
 
                 val maxLines = maxOf(col1Lines.size, col2Lines.size, col3Lines.size, col4Lines.size, 1)
@@ -220,7 +180,7 @@ object PdfReportGenerator {
                     page = pdfDocument.startPage(pageInfo)
                     canvas = page.canvas
                     y = drawHeader(canvas, 35f)
-                    y = drawMasterTableHeader(canvas, y)
+                    y = drawTableHeader(canvas, y)
                 }
 
                 val startY = y
@@ -228,54 +188,39 @@ object PdfReportGenerator {
                     canvas.drawRect(MARGIN_LEFT, startY, MARGIN_RIGHT, startY + rowHeight, altRowBgPaint)
                 }
 
-                col1Lines.forEachIndexed { i, line -> canvas.drawText(line, 40f, startY + 12f + (i * 13f), boldPaint) }
-                if (hasStatus) col2Lines.forEachIndexed { i, line -> canvas.drawText(line, statusX, startY + 12f + (i * 13f), paint) }
-                if (hasDates) col3Lines.forEachIndexed { i, line -> canvas.drawText(line, datesX, startY + 12f + (i * 13f), paint) }
-                if (hasHistory) col4Lines.forEachIndexed { i, line -> canvas.drawText(line, historyX, startY + 12f + (i * 13f), paint) }
+                col1Lines.forEachIndexed { i, line ->
+                    canvas.drawText(line, 40f, startY + 12f + (i * 13f), boldPaint)
+                }
+
+                col2Lines.forEachIndexed { i, line ->
+                    canvas.drawText(line, 160f, startY + 12f + (i * 13f), paint)
+                }
+
+                col3Lines.forEachIndexed { i, line ->
+                    canvas.drawText(line, 380f, startY + 12f + (i * 13f), paint)
+                }
+
+                col4Lines.forEachIndexed { i, line ->
+                    canvas.drawText(line, 550f, startY + 12f + (i * 13f), paint)
+                }
 
                 y += rowHeight
                 canvas.drawLine(MARGIN_LEFT, y, MARGIN_RIGHT, y, borderPaint)
             }
 
         } else if (isDateCourt) {
-            val hasSerial = true
-            val hasLoc = true
-            val hasRemarks = records.any { it.remarks.isNotBlank() }
-
-            val fixedWidth = 45f + 120f
-            val availableWidth = (MARGIN_RIGHT - MARGIN_LEFT) - fixedWidth
-
-            var activeDynamicCols = 2 // List Serial & Location always shown
-            if (hasRemarks) activeDynamicCols++
-
-            val dynamicColWidth = availableWidth / activeDynamicCols
-
-            var serialX = MARGIN_LEFT + fixedWidth
-            var locX = serialX + dynamicColWidth
-            var remarksX = locX + dynamicColWidth
-
-            fun drawDateCourtTableHeader(currentCanvas: android.graphics.Canvas, currentY: Float): Float {
-                currentCanvas.drawRect(MARGIN_LEFT, currentY, MARGIN_RIGHT, currentY + 22f, headerBgPaint)
-                currentCanvas.drawText("S.No", 40f, currentY + 15f, headerPaint)
-                currentCanvas.drawText("File No.", 85f, currentY + 15f, headerPaint)
-                currentCanvas.drawText("List Type & Serial No.", serialX, currentY + 15f, headerPaint)
-                currentCanvas.drawText("Status / Storage Location", locX, currentY + 15f, headerPaint)
-                if (hasRemarks) currentCanvas.drawText("Remarks / Case Notes", remarksX, currentY + 15f, headerPaint)
-                return currentY + 22f
-            }
-
-            y = drawDateCourtTableHeader(canvas, y)
+            y = drawTableHeader(canvas, y)
 
             records.forEachIndexed { index, record ->
-                val serialText = getHistoricalSerialNo(record, dateContext)
-                val locText = if (record.sentToChamber) "Chamber: ${record.judgeName}" else if (record.status == "Entry Deleted") "[DELETED]" else record.storageLocation.ifEmpty { record.status }
-                val remarksText = record.remarks
+                val serialText = record.serialNo.ifEmpty { "N/A" }
+                val locText = if (record.sentToChamber) "Chamber: ${record.judgeName}" else record.storageLocation.ifEmpty { record.status }
+                val remarksText = record.remarks.ifEmpty { "-" }
 
                 val col1Lines = listOf("${index + 1}")
-                val col2Lines = wrapText(record.fileNo, boldPaint, 110f)
-                val col3Lines = wrapText(serialText, paint, dynamicColWidth - 15f)
-                val col4Lines = wrapText(locText, paint, dynamicColWidth - 15f)
-                val col5Lines = if (hasRemarks) wrapText(remarksText, paint, dynamicColWidth - 15f) else emptyList()
+                val col2Lines = wrapText(record.fileNo, boldPaint, 115f)
+                val col3Lines = wrapText(serialText, paint, 190f)
+                val col4Lines = wrapText(locText, paint, 280f)
+                val col5Lines = wrapText(remarksText, paint, 260f)
 
                 val maxLines = maxOf(col2Lines.size, col3Lines.size, col4Lines.size, col5Lines.size, 1)
                 val rowHeight = (maxLines * 13f) + 8f
@@ -285,7 +230,7 @@ object PdfReportGenerator {
                     page = pdfDocument.startPage(pageInfo)
                     canvas = page.canvas
                     y = drawHeader(canvas, 35f)
-                    y = drawDateCourtTableHeader(canvas, y)
+                    y = drawTableHeader(canvas, y)
                 }
 
                 val startY = y
@@ -294,10 +239,22 @@ object PdfReportGenerator {
                 }
 
                 canvas.drawText(col1Lines[0], 40f, startY + 12f, paint)
-                col2Lines.forEachIndexed { i, line -> canvas.drawText(line, 85f, startY + 12f + (i * 13f), boldPaint) }
-                col3Lines.forEachIndexed { i, line -> canvas.drawText(line, serialX, startY + 12f + (i * 13f), paint) }
-                col4Lines.forEachIndexed { i, line -> canvas.drawText(line, locX, startY + 12f + (i * 13f), paint) }
-                if (hasRemarks) col5Lines.forEachIndexed { i, line -> canvas.drawText(line, remarksX, startY + 12f + (i * 13f), paint) }
+
+                col2Lines.forEachIndexed { i, line ->
+                    canvas.drawText(line, 85f, startY + 12f + (i * 13f), boldPaint)
+                }
+
+                col3Lines.forEachIndexed { i, line ->
+                    canvas.drawText(line, 210f, startY + 12f + (i * 13f), paint)
+                }
+
+                col4Lines.forEachIndexed { i, line ->
+                    canvas.drawText(line, 410f, startY + 12f + (i * 13f), paint)
+                }
+
+                col5Lines.forEachIndexed { i, line ->
+                    canvas.drawText(line, 700f, startY + 12f + (i * 13f), paint)
+                }
 
                 y += rowHeight
                 canvas.drawLine(MARGIN_LEFT, y, MARGIN_RIGHT, y, borderPaint)
