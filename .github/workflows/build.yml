@@ -26,7 +26,7 @@ jobs:
           gradle-version: '8.5'
 
       - name: Build Debug APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon --info
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
