@@ -4,6 +4,7 @@ plugins {
     id("kotlin-kapt")
 }
 
+
 android {
     namespace = "com.court.filetracker"
     compileSdk = 34
