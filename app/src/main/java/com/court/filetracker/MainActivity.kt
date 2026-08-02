@@ -15,6 +15,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,10 +48,11 @@ class MainActivity : ComponentActivity() {
 fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Unit) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
 
     val currentDate = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date()) }
 
+    // Form States
     var selectedMode by remember { mutableStateOf("Dispatched") }
     var courtNoInput by remember { mutableStateOf("") }
     var listTypeInput by remember { mutableStateOf("DCL") }
@@ -59,10 +62,14 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
     var judgeNameInput by remember { mutableStateOf("") }
     var storageLocationInput by remember { mutableStateOf("Shelf") }
 
+    // Search & Filter
     var searchQuery by remember { mutableStateOf("") }
     var filterDate by remember { mutableStateOf(currentDate) }
 
+    // Bulk Mode
     var isBulkMode by remember { mutableStateOf(false) }
+
+    // Dialog States
     var activeTraceRecord by remember { mutableStateOf<FileRecord?>(null) }
     var activeUpdateRecord by remember { mutableStateOf<FileRecord?>(null) }
 
@@ -137,6 +144,7 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
         ) { padding ->
             Column(modifier = Modifier.padding(padding).padding(12.dp)) {
 
+                // Registration Card
                 Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), elevation = CardDefaults.cardElevation(4.dp)) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("☀️ Registration / Re-Dispatch", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -199,6 +207,7 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                     }
                 }
 
+                // Search Bar
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
@@ -207,6 +216,7 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                 )
 
+                // List Feed
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(recordsList) { record ->
                         Card(modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record }) {
@@ -235,15 +245,17 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
         }
     }
 
-    if (activeUpdateRecord != null) {
+    // Status Update Modal Dialog
+    val currentRecordForUpdate = activeUpdateRecord
+    if (currentRecordForUpdate != null) {
         var newStatus by remember { mutableStateOf("Taken Up") }
         var locInput by remember { mutableStateOf("") }
-        var remarksUpdate by remember { mutableStateOf(activeUpdateRecord?.remarks ?: "") }
+        var remarksUpdate by remember { mutableStateOf(currentRecordForUpdate.remarks) }
         var deleteReason by remember { mutableStateOf("") }
 
         AlertDialog(
             onDismissRequest = { activeUpdateRecord = null },
-            title = { Text("Update Disposal: ${activeUpdateRecord?.fileNo}") },
+            title = { Text("Update Disposal: ${currentRecordForUpdate.fileNo}") },
             text = {
                 Column {
                     Text("Select Target Status:")
@@ -264,18 +276,18 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
             },
             confirmButton = {
                 Button(onClick = {
-                    val current = activeUpdateRecord ?: return@Button
                     scope.launch {
                         val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
                         val logEntry = "[$filterDate $time] Status changed to '$newStatus' (Loc: $locInput) ${if (deleteReason.isNotBlank()) "Reason: $deleteReason" else ""}"
 
-                        val updated = current.copy(
+                        // Chamber Flag Auto-Reset Rule applied: sentToChamber = false, judgeName = ""
+                        val updated = currentRecordForUpdate.copy(
                             status = newStatus,
                             storageLocation = locInput,
                             sentToChamber = false,
                             judgeName = "",
                             remarks = remarksUpdate,
-                            historyLog = "${current.historyLog}\n$logEntry"
+                            historyLog = "${currentRecordForUpdate.historyLog}\n$logEntry"
                         )
                         dao.insertOrUpdateRecord(updated)
                         activeUpdateRecord = null
@@ -285,14 +297,20 @@ fun MainAppScreen(dao: FileRecordDao, onBackup: () -> Unit, onRestore: () -> Uni
         )
     }
 
-    if (activeTraceRecord != null) {
+    // Audit Stack Trace Modal Dialog
+    val currentRecordForTrace = activeTraceRecord
+    if (currentRecordForTrace != null) {
         AlertDialog(
             onDismissRequest = { activeTraceRecord = null },
-            title = { Text("Audit Stack Trace: ${activeTraceRecord?.fileNo}") },
+            title = { Text("Audit Stack Trace: ${currentRecordForTrace.fileNo}") },
             text = {
                 LazyColumn(modifier = Modifier.height(250.dp)) {
                     item {
-                        Text(activeTraceRecord?.historyLog ?: "No History Log", fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                        Text(
+                            text = currentRecordForTrace.historyLog.ifEmpty { "No History Log" },
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
                     }
                 }
             },
