@@ -32,7 +32,7 @@ object PdfReportGenerator {
 
     fun generateDateCourtReport(context: Context, date: String, courtNo: String, rawRecords: List<FileRecord>) {
         val validRecords = rawRecords.filter { it.fileNo.isNotBlank() }
-        generatePdf(context, "DAILY COURT DISPATCH REPORT - COURT NO. $courtNo ($date)", validRecords, isDateCourt = true)
+        generatePdf(context, "DAILY COURT DISPATCH REPORT - COURT NO. $courtNo ($date)", validRecords, dateContext = date, isDateCourt = true)
     }
 
     // Dynamic Multi-Line Text Wrapper
@@ -73,10 +73,22 @@ object PdfReportGenerator {
         return lines.ifEmpty { listOf("") }
     }
 
+    // Helper: Extracts historical serial number logged on targetDate
+    private fun getHistoricalSerialNo(record: FileRecord, targetDate: String): String {
+        val logLines = record.historyLog.split("\n")
+        val dateLine = logLines.lastOrNull { it.contains("[$targetDate]") && it.contains("Serial:") }
+        if (dateLine != null) {
+            val match = Regex("Serial:\\s*([^|]+)").find(dateLine)
+            if (match != null) return match.groupValues[1].trim()
+        }
+        return record.serialNo.ifEmpty { "N/A" }
+    }
+
     private fun generatePdf(
         context: Context,
         reportTitle: String,
         records: List<FileRecord>,
+        dateContext: String = "",
         isMaster: Boolean = false,
         isSingleFile: Boolean = false,
         isDateCourt: Boolean = false
@@ -152,14 +164,12 @@ object PdfReportGenerator {
             }
 
         } else if (isMaster) {
-            // Master Report - Check column availability across all rows using Kotlin if-expression
             val hasStatus = records.any { (if (it.status == "Entry Deleted") "[DELETED]" else "${it.status} (${it.storageLocation.ifEmpty { "Court " + it.courtNo }})").isNotBlank() }
             val hasDates = records.any { it.dispatchDatesCsv.isNotBlank() }
             val hasHistory = records.any { it.historyLog.isNotBlank() }
 
-            // Dynamic Column Positions & Widths Calculation
-            val totalUsableWidth = MARGIN_RIGHT - MARGIN_LEFT // 938 pt
-            val flexWidth = totalUsableWidth - 120f // FileNo gets fixed 120 pt
+            val totalUsableWidth = MARGIN_RIGHT - MARGIN_LEFT
+            val flexWidth = totalUsableWidth - 120f
             var activeColsCount = 0
             if (hasStatus) activeColsCount++
             if (hasDates) activeColsCount++
@@ -228,35 +238,28 @@ object PdfReportGenerator {
             }
 
         } else if (isDateCourt) {
-            val hasSerial = records.any { it.serialNo.isNotBlank() && it.serialNo != "N/A" }
-            val hasLoc = records.any { (if (it.sentToChamber) "Chamber: ${it.judgeName}" else it.storageLocation.ifEmpty { it.status }).isNotBlank() }
+            val hasSerial = true
+            val hasLoc = true
             val hasRemarks = records.any { it.remarks.isNotBlank() }
 
             val fixedWidth = 45f + 120f
             val availableWidth = (MARGIN_RIGHT - MARGIN_LEFT) - fixedWidth
 
-            var activeDynamicCols = 0
-            if (hasSerial) activeDynamicCols++
-            if (hasLoc) activeDynamicCols++
+            var activeDynamicCols = 2 // List Serial & Location always shown
             if (hasRemarks) activeDynamicCols++
 
-            val dynamicColWidth = if (activeDynamicCols > 0) availableWidth / activeDynamicCols else availableWidth
+            val dynamicColWidth = availableWidth / activeDynamicCols
 
-            var serialX = 0f
-            var locX = 0f
-            var remarksX = 0f
-            var currX = MARGIN_LEFT + fixedWidth
-
-            if (hasSerial) { serialX = currX; currX += dynamicColWidth }
-            if (hasLoc) { locX = currX; currX += dynamicColWidth }
-            if (hasRemarks) { remarksX = currX }
+            var serialX = MARGIN_LEFT + fixedWidth
+            var locX = serialX + dynamicColWidth
+            var remarksX = locX + dynamicColWidth
 
             fun drawDateCourtTableHeader(currentCanvas: android.graphics.Canvas, currentY: Float): Float {
                 currentCanvas.drawRect(MARGIN_LEFT, currentY, MARGIN_RIGHT, currentY + 22f, headerBgPaint)
                 currentCanvas.drawText("S.No", 40f, currentY + 15f, headerPaint)
                 currentCanvas.drawText("File No.", 85f, currentY + 15f, headerPaint)
-                if (hasSerial) currentCanvas.drawText("List Type & Serial No.", serialX, currentY + 15f, headerPaint)
-                if (hasLoc) currentCanvas.drawText("Status / Storage Location", locX, currentY + 15f, headerPaint)
+                currentCanvas.drawText("List Type & Serial No.", serialX, currentY + 15f, headerPaint)
+                currentCanvas.drawText("Status / Storage Location", locX, currentY + 15f, headerPaint)
                 if (hasRemarks) currentCanvas.drawText("Remarks / Case Notes", remarksX, currentY + 15f, headerPaint)
                 return currentY + 22f
             }
@@ -264,14 +267,14 @@ object PdfReportGenerator {
             y = drawDateCourtTableHeader(canvas, y)
 
             records.forEachIndexed { index, record ->
-                val serialText = if (record.serialNo.isNotBlank()) record.serialNo else ""
-                val locText = if (record.sentToChamber) "Chamber: ${record.judgeName}" else record.storageLocation.ifEmpty { record.status }
+                val serialText = getHistoricalSerialNo(record, dateContext)
+                val locText = if (record.sentToChamber) "Chamber: ${record.judgeName}" else if (record.status == "Entry Deleted") "[DELETED]" else record.storageLocation.ifEmpty { record.status }
                 val remarksText = record.remarks
 
                 val col1Lines = listOf("${index + 1}")
                 val col2Lines = wrapText(record.fileNo, boldPaint, 110f)
-                val col3Lines = if (hasSerial) wrapText(serialText, paint, dynamicColWidth - 15f) else emptyList()
-                val col4Lines = if (hasLoc) wrapText(locText, paint, dynamicColWidth - 15f) else emptyList()
+                val col3Lines = wrapText(serialText, paint, dynamicColWidth - 15f)
+                val col4Lines = wrapText(locText, paint, dynamicColWidth - 15f)
                 val col5Lines = if (hasRemarks) wrapText(remarksText, paint, dynamicColWidth - 15f) else emptyList()
 
                 val maxLines = maxOf(col2Lines.size, col3Lines.size, col4Lines.size, col5Lines.size, 1)
@@ -292,8 +295,8 @@ object PdfReportGenerator {
 
                 canvas.drawText(col1Lines[0], 40f, startY + 12f, paint)
                 col2Lines.forEachIndexed { i, line -> canvas.drawText(line, 85f, startY + 12f + (i * 13f), boldPaint) }
-                if (hasSerial) col3Lines.forEachIndexed { i, line -> canvas.drawText(line, serialX, startY + 12f + (i * 13f), paint) }
-                if (hasLoc) col4Lines.forEachIndexed { i, line -> canvas.drawText(line, locX, startY + 12f + (i * 13f), paint) }
+                col3Lines.forEachIndexed { i, line -> canvas.drawText(line, serialX, startY + 12f + (i * 13f), paint) }
+                col4Lines.forEachIndexed { i, line -> canvas.drawText(line, locX, startY + 12f + (i * 13f), paint) }
                 if (hasRemarks) col5Lines.forEachIndexed { i, line -> canvas.drawText(line, remarksX, startY + 12f + (i * 13f), paint) }
 
                 y += rowHeight
