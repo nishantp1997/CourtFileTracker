@@ -18,7 +18,7 @@ object PdfReportGenerator {
     private const val PAGE_HEIGHT = 612
 
     fun generateMasterReport(context: Context, records: List<FileRecord>) {
-        generatePdf(context, "MASTER DATABASE LEDGER WITH AUDIT TRAIL (INCL. DELETED)", records, isMaster = true)
+        generatePdf(context, "MASTER DATABASE LEDGER WITH COMPLETE AUDIT TRAIL", records, isMaster = true)
     }
 
     fun generateSingleFileReport(context: Context, record: FileRecord) {
@@ -52,7 +52,7 @@ object PdfReportGenerator {
         var y = 40f
         canvas.drawText("ALLAHABAD HIGH COURT - FILE MOVEMENT & TRACKING SYSTEM", 35f, y, titlePaint)
         y += 18f
-        canvas.drawText("Report Type: $reportTitle | Generated: ${SimpleDateFormat("dd-MM-yy HH:mm", Locale.getDefault()).format(Date())}", 35f, y, paint)
+        canvas.drawText("Report Type: $reportTitle | Generated: ${SimpleDateFormat("dd-MM-yy", Locale.getDefault()).format(Date())}", 35f, y, paint)
         y += 12f
         canvas.drawLine(35f, y, 973f, y, borderPaint)
         y += 15f
@@ -73,7 +73,7 @@ object PdfReportGenerator {
             y += 20f
             canvas.drawLine(35f, y, 973f, y, borderPaint)
             y += 18f
-            canvas.drawText("Complete Audit Stack Trace Log (With Court No, Serial No & List Type):", 35f, y, titlePaint)
+            canvas.drawText("Complete Audit Stack Trace Log:", 35f, y, titlePaint)
             y += 18f
 
             record.historyLog.split("\n").filter { it.isNotBlank() }.forEach { line ->
@@ -88,28 +88,30 @@ object PdfReportGenerator {
             }
 
         } else if (isMaster) {
+            // Master Report: Multi-line Audit Stack Trace Wrapping (No Data Cutting)
             canvas.drawRect(35f, y, 973f, y + 20f, headerBgPaint)
             canvas.drawText("File No.", 40f, y + 14f, headerPaint)
-            canvas.drawText("Active Status & Location", 180f, y + 14f, headerPaint)
-            canvas.drawText("All Dispatch Dates", 420f, y + 14f, headerPaint)
-            canvas.drawText("Audit Stack Trace Log", 640f, y + 14f, headerPaint)
+            canvas.drawText("Active Status & Location", 160f, y + 14f, headerPaint)
+            canvas.drawText("All Dispatch Dates", 380f, y + 14f, headerPaint)
+            canvas.drawText("Complete Audit Stack Trace Log", 550f, y + 14f, headerPaint)
             y += 20f
 
             records.forEachIndexed { idx, record ->
-                if (y > 550f) {
+                if (y > 540f) {
                     pdfDocument.finishPage(page)
                     page = pdfDocument.startPage(pageInfo)
                     canvas = page.canvas
                     y = 40f
                 }
-                if (idx % 2 == 1) canvas.drawRect(35f, y, 973f, y + 24f, altRowBgPaint)
+
+                val historyLines = record.historyLog.split("\n").filter { it.isNotBlank() }
+                val startY = y
 
                 canvas.drawText(record.fileNo, 40f, y + 15f, paint)
                 val statusText = if (record.status == "Entry Deleted") "[DELETED]" else "${record.status} (${record.storageLocation.ifEmpty { "Court " + record.courtNo }})"
-                canvas.drawText(statusText.take(32), 180f, y + 15f, paint)
-                canvas.drawText(record.dispatchDatesCsv.take(30), 420f, y + 15f, paint)
+                canvas.drawText(statusText.take(28), 160f, y + 15f, paint)
+                canvas.drawText(record.dispatchDatesCsv.take(22), 380f, y + 15f, paint)
 
-                val historyLines = record.historyLog.split("\n").filter { it.isNotBlank() }
                 var lineY = y + 15f
                 historyLines.forEach { line ->
                     if (lineY > 550f) {
@@ -118,22 +120,26 @@ object PdfReportGenerator {
                         canvas = page.canvas
                         lineY = 40f
                     }
-                    canvas.drawText(line.take(55), 640f, lineY, paint)
-                    lineY += 13f
+                    // Wraps long trace entries into 65-char chunks so no text gets cut off
+                    line.chunked(65).forEach { chunk ->
+                        canvas.drawText(chunk, 550f, lineY, paint)
+                        lineY += 13f
+                    }
                 }
+
                 y = maxOf(y + 24f, lineY + 4f)
+                if (idx % 2 == 1) canvas.drawRect(35f, startY, 973f, y, altRowBgPaint)
                 canvas.drawLine(35f, y, 973f, y, borderPaint)
             }
 
-        } else {
-            // Date & Court-Wise Report
+        } else if (isDateCourt) {
+            // Date & Court Report: Omit Audit Stack Trace, Expand Column Widths
             canvas.drawRect(35f, y, 973f, y + 20f, headerBgPaint)
             canvas.drawText("S.No", 40f, y + 14f, headerPaint)
-            canvas.drawText("File No.", 80f, y + 14f, headerPaint)
-            canvas.drawText("Serial No.", 200f, y + 14f, headerPaint)
-            canvas.drawText("Status / Location", 340f, y + 14f, headerPaint)
-            canvas.drawText("Remarks", 560f, y + 14f, headerPaint)
-            canvas.drawText("Audit Stack Trace Log", 740f, y + 14f, headerPaint)
+            canvas.drawText("File No.", 90f, y + 14f, headerPaint)
+            canvas.drawText("List Type & Serial No.", 240f, y + 14f, headerPaint)
+            canvas.drawText("Status / Storage Location", 450f, y + 14f, headerPaint)
+            canvas.drawText("Remarks / Case Notes", 720f, y + 14f, headerPaint)
             y += 20f
 
             records.forEachIndexed { index, record ->
@@ -146,14 +152,12 @@ object PdfReportGenerator {
                 if (index % 2 == 1) canvas.drawRect(35f, y, 973f, y + 22f, altRowBgPaint)
 
                 canvas.drawText("${index + 1}", 40f, y + 15f, paint)
-                canvas.drawText(record.fileNo, 80f, y + 15f, paint)
-                canvas.drawText(record.serialNo, 200f, y + 15f, paint)
+                canvas.drawText(record.fileNo, 90f, y + 15f, paint)
+                canvas.drawText(record.serialNo.ifEmpty { "N/A" }, 240f, y + 15f, paint)
                 val locText = if (record.sentToChamber) "Chamber: ${record.judgeName}" else record.storageLocation.ifEmpty { record.status }
-                canvas.drawText(locText.take(28), 340f, y + 15f, paint)
-                canvas.drawText(record.remarks.take(25), 560f, y + 15f, paint)
+                canvas.drawText(locText.take(35), 450f, y + 15f, paint)
+                canvas.drawText(record.remarks.take(38).ifEmpty { "-" }, 720f, y + 15f, paint)
 
-                val lastLog = record.historyLog.split("\n").lastOrNull { it.isNotBlank() } ?: ""
-                canvas.drawText(lastLog.take(38), 740f, y + 15f, paint)
                 y += 22f
                 canvas.drawLine(35f, y, 973f, y, borderPaint)
             }
