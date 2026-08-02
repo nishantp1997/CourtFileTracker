@@ -85,10 +85,8 @@ fun MainAppScreen(
     var locationDropdownExpanded by remember { mutableStateOf(false) }
     val defaultLocations = listOf("Shelf", "Bundle", "Person", "Seat", "Chamber")
 
-    // Navigation Views: MAIN, SEARCH_MENU, BULK, REPORTS_PANEL
+    // Navigation Views
     var currentView by remember { mutableStateOf("MAIN") }
-    
-    // Search Menu Modes: "NONE", "DATE", "FILE_NO", "CHAMBER", "TAKEN_UP"
     var activeSearchOption by remember { mutableStateOf("NONE") }
     var searchDateInput by remember { mutableStateOf(currentDate) }
     var searchSelectedCourt by remember { mutableStateOf<String?>(null) }
@@ -119,7 +117,7 @@ fun MainAppScreen(
     val recordsList by dao.getRecordsByDate(normalizeDate(dispatchDateInput)).collectAsState(initial = emptyList())
     val searchCourtsList by dao.getCourtsByDate(normalizedSearchDate).collectAsState(initial = emptyList())
     val searchCourtFiles by (searchSelectedCourt?.let { dao.getRecordsByDateAndCourt(normalizedSearchDate, it) } ?: dao.getRecordsByDate(normalizedSearchDate)).collectAsState(initial = emptyList())
-    val bulkCourtFiles by (if (bulkCourtNo.isNotBlank()) dao.getRecordsByDateAndCourt(normalizedBulkDate, bulkCourtNo) else dao.getRecordsByDate(normalizedBulkDate)).collectAsState(initial = emptyList())
+    val bulkCourtFiles by (if (bulkCourtNo.isNotBlank()) dao.getRecordsByDateAndCourt(normalizedBulkDate, stripLeadingZeros(bulkCourtNo)) else dao.getRecordsByDate(normalizedBulkDate)).collectAsState(initial = emptyList())
     
     // Search Flows
     val fileNoSearchResults by dao.searchRecords(normalizedSearchFileNo).collectAsState(initial = emptyList())
@@ -215,7 +213,6 @@ fun MainAppScreen(
             Column(modifier = Modifier.padding(padding).padding(12.dp)) {
 
                 if (currentView == "SEARCH_MENU") {
-                    // STRUCTURED SEARCH MENU WITH 4 DISTINCT OPTIONS
                     Text("Select Search Method:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
 
                     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -245,7 +242,6 @@ fun MainAppScreen(
 
                     when (activeSearchOption) {
                         "DATE" -> {
-                            // OPTION 1: Search by Date -> Show Courts -> Show Files for Court
                             OutlinedTextField(
                                 value = searchDateInput,
                                 onValueChange = { searchDateInput = it; searchSelectedCourt = null },
@@ -298,7 +294,6 @@ fun MainAppScreen(
                         }
 
                         "FILE_NO" -> {
-                            // OPTION 2: Search By File Number
                             OutlinedTextField(
                                 value = searchFileNoInput,
                                 onValueChange = { searchFileNoInput = it },
@@ -339,7 +334,6 @@ fun MainAppScreen(
                         }
 
                         "CHAMBER" -> {
-                            // OPTION 3: Find All In Chamber Files
                             Text("All In Chamber Files (${chamberFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
                             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(chamberFiles) { record ->
@@ -370,7 +364,6 @@ fun MainAppScreen(
                         }
 
                         "TAKEN_UP" -> {
-                            // OPTION 4: Find All Taken Up Files
                             Text("All Currently 'Taken Up' Files (${takenUpFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
                             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(takenUpFiles) { record ->
@@ -438,7 +431,8 @@ fun MainAppScreen(
                             Button(
                                 onClick = {
                                     scope.launch {
-                                        val rec = dao.getRecordByFileNo(reportTargetFileNo.trim())
+                                        val cleanTarget = stripLeadingZeros(reportTargetFileNo)
+                                        val rec = dao.getRecordByFileNo(cleanTarget)
                                         if (rec != null) {
                                             PdfReportGenerator.generateSingleFileReport(context, rec)
                                         } else {
@@ -469,8 +463,9 @@ fun MainAppScreen(
                             Button(
                                 onClick = {
                                     scope.launch {
-                                        val recs = dao.getRecordsByDateAndCourt(normalizedReportDate, reportTargetCourtNo.trim()).first()
-                                        PdfReportGenerator.generateDateCourtReport(context, normalizedReportDate, reportTargetCourtNo.trim(), recs)
+                                        val cleanCourt = stripLeadingZeros(reportTargetCourtNo)
+                                        val recs = dao.getRecordsByDateAndCourt(normalizedReportDate, cleanCourt).first()
+                                        PdfReportGenerator.generateDateCourtReport(context, normalizedReportDate, cleanCourt, recs)
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
@@ -591,14 +586,14 @@ fun MainAppScreen(
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = courtNoInput,
-                                        onValueChange = { if (it.isEmpty() || it.toIntOrNull() != null) courtNoInput = it },
+                                        onValueChange = { courtNoInput = it },
                                         label = { Text("Court No") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1f)
                                     )
                                     OutlinedTextField(
                                         value = serialNoInput,
-                                        onValueChange = { if (it.isEmpty() || it.toFloatOrNull() != null) serialNoInput = it },
+                                        onValueChange = { serialNoInput = it },
                                         label = { Text("Serial No") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                         modifier = Modifier.weight(1f)
@@ -651,14 +646,16 @@ fun MainAppScreen(
                             Button(
                                 onClick = {
                                     val fileNoRegex = Regex("^\\d+\\/\\d+$")
-                                    if (!fileNoRegex.matches(fileNoInput.trim())) {
+                                    val cleanedFileNo = stripLeadingZeros(fileNoInput)
+
+                                    if (!fileNoRegex.matches(cleanedFileNo)) {
                                         Toast.makeText(context, "Invalid File No! Must be format: [Number]/[Year]", Toast.LENGTH_LONG).show()
                                         return@Button
                                     }
 
                                     val cleanDate = normalizeDate(dispatchDateInput)
 
-                                    if (cleanDate.isBlank() || fileNoInput.isBlank()) {
+                                    if (cleanDate.isBlank() || cleanedFileNo.isBlank()) {
                                         Toast.makeText(context, "Please fill required fields", Toast.LENGTH_SHORT).show()
                                         return@Button
                                     }
@@ -668,10 +665,11 @@ fun MainAppScreen(
                                     }
 
                                     scope.launch {
-                                        val existing = dao.getRecordByFileNo(fileNoInput.trim())
+                                        val existing = dao.getRecordByFileNo(cleanedFileNo)
                                         val newStatus = if (selectedMode == "Dispatched") "Dispatched" else if (selectedMode == "Chamber") "Sent to Chamber" else "Not Sent to Court"
                                         val isChamber = selectedMode == "Chamber"
-                                        val judge = if (isChamber) judgeNameInput else ""
+                                        val isDispatched = selectedMode == "Dispatched"
+                                        val judge = if (isChamber) judgeNameInput.trim() else ""
 
                                         val existingCsv = existing?.dispatchDatesCsv ?: ""
                                         val updatedCsv = when {
@@ -680,24 +678,31 @@ fun MainAppScreen(
                                             else -> "$existingCsv, $cleanDate"
                                         }
 
-                                        val serialFormatted = "$listTypeInput - ${serialNoInput.trim()}"
-                                        val dispatchDetails = if (selectedMode == "Dispatched") " | Court No: ${courtNoInput.trim()} | Serial: $serialFormatted" else ""
-                                        val logRemark = if (remarksInput.isNotBlank()) " | Remarks: $remarksInput" else ""
+                                        // Rule 1: Strip leading zeros from Court No and Serial No
+                                        val cleanCourtNo = if (isDispatched) stripLeadingZeros(courtNoInput) else "N/A"
+                                        val cleanSerialVal = if (isDispatched) stripLeadingZeros(serialNoInput) else ""
+                                        val serialFormatted = if (isDispatched) "$listTypeInput - $cleanSerialVal" else ""
+
+                                        // Rule 2: Chamber vs Dispatched Mutual Exclusivity
+                                        // - If Sent to Chamber: Court No, Serial No, List Type removed
+                                        // - If Re-Dispatched: Chamber status set to false, Judge Name removed
+                                        val dispatchDetails = if (isDispatched) " | Court No: $cleanCourtNo | Serial: $serialFormatted" else ""
+                                        val logRemark = if (remarksInput.isNotBlank()) " | Remarks: ${remarksInput.trim()}" else ""
 
                                         val entryLog = "[$cleanDate] Registered as '$newStatus'$dispatchDetails${if (isChamber) " (Judge: $judge)" else ""}$logRemark"
                                         val updatedHistory = if (existing != null) "${existing.historyLog}\n$entryLog" else entryLog
 
                                         val record = FileRecord(
                                             id = existing?.id ?: 0,
-                                            fileNo = fileNoInput.trim(),
+                                            fileNo = cleanedFileNo,
                                             dispatchDate = cleanDate,
                                             dispatchDatesCsv = updatedCsv,
-                                            courtNo = if (selectedMode == "Dispatched") courtNoInput.trim() else "N/A",
-                                            serialNo = if (selectedMode == "Dispatched") serialFormatted else "",
+                                            courtNo = if (isChamber) "N/A" else cleanCourtNo,
+                                            serialNo = if (isChamber) "" else serialFormatted,
                                             status = newStatus,
                                             storageLocation = if (isChamber) "Chamber: $judge" else storageLocationInput.trim(),
                                             sentToChamber = isChamber,
-                                            judgeName = judge,
+                                            judgeName = if (isDispatched) "" else judge,
                                             remarks = remarksInput.trim(),
                                             historyLog = updatedHistory
                                         )
@@ -745,7 +750,7 @@ fun MainAppScreen(
         }
     }
 
-    // DISPOSAL UPDATE MODAL WITH COURT DETAILS VALIDATION
+    // DISPOSAL UPDATE MODAL WITH MANDATORY RECEIVED LOCATION SELECTION
     val currentRecordForUpdate = activeUpdateRecord
     if (currentRecordForUpdate != null) {
         var newStatus by remember { mutableStateOf("Taken Up") }
@@ -754,8 +759,13 @@ fun MainAppScreen(
         var deleteReason by remember { mutableStateOf("") }
         var validationError by remember { mutableStateOf<String?>(null) }
 
+        // Dropdown state for "Received from Court" choices
+        var receivedDropdownExpanded by remember { mutableStateOf(false) }
+        val receivedLocationOptions = listOf("Listing Seat", "Disposal/Compliance Seat", "Shelf")
+
         val isDeleteMode = newStatus == "Entry Deleted"
-        val isCourtStatus = newStatus == "Pass Over" || newStatus == "Taken Up" || newStatus == "Received from Court"
+        val isReceivedMode = newStatus == "Received from Court"
+        val isCourtStatus = newStatus == "Pass Over" || newStatus == "Taken Up" || isReceivedMode
 
         val isCourtInfoMissing = currentRecordForUpdate.courtNo.isBlank() || 
                                 currentRecordForUpdate.courtNo == "N/A" || 
@@ -774,6 +784,7 @@ fun MainAppScreen(
                                 selected = newStatus == opt, 
                                 onClick = { 
                                     newStatus = opt
+                                    locInput = if (opt == "Received from Court") "Shelf" else ""
                                     validationError = null 
                                 }
                             )
@@ -787,7 +798,7 @@ fun MainAppScreen(
                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                         ) {
                             Text(
-                                text = "⚠️ Cannot update to '$newStatus': This file has no Court Number, List Type, or Serial Number recorded in database. Please Re-Dispatch first.",
+                                text = "⚠️ Cannot update to '$newStatus': File has no Court Number/Serial Number recorded in database. Please Re-Dispatch first.",
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                                 fontSize = 12.sp,
                                 modifier = Modifier.padding(8.dp)
@@ -795,7 +806,37 @@ fun MainAppScreen(
                         }
                     }
 
-                    if (isDeleteMode) {
+                    // Rule 3: 3 Mandatory Options for "Received from Court"
+                    if (isReceivedMode) {
+                        Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                            OutlinedTextField(
+                                value = locInput,
+                                onValueChange = { locInput = it },
+                                label = { Text("Select Storage Location *") },
+                                readOnly = true,
+                                trailingIcon = {
+                                    IconButton(onClick = { receivedDropdownExpanded = true }) {
+                                        Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Received Location")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            DropdownMenu(
+                                expanded = receivedDropdownExpanded,
+                                onDismissRequest = { receivedDropdownExpanded = false }
+                            ) {
+                                receivedLocationOptions.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = { Text(option) },
+                                        onClick = { 
+                                            locInput = option
+                                            receivedDropdownExpanded = false 
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    } else if (isDeleteMode) {
                         OutlinedTextField(
                             value = deleteReason,
                             onValueChange = { deleteReason = it },
@@ -834,8 +875,14 @@ fun MainAppScreen(
                     enabled = (!isDeleteMode || deleteReason.isNotBlank()),
                     onClick = {
                         if (isCourtStatus && isCourtInfoMissing) {
-                            validationError = "Status change blocked! Court Number, List Type, and Serial Number must be registered first."
+                            validationError = "Status change blocked! Court Number and Serial Number required."
                             Toast.makeText(context, "Cannot change status without Court Number & Serial Number!", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
+
+                        if (isReceivedMode && locInput.isBlank()) {
+                            validationError = "Please select one of the three storage locations!"
+                            Toast.makeText(context, "Select Listing Seat, Disposal/Compliance Seat, or Shelf", Toast.LENGTH_SHORT).show()
                             return@Button
                         }
 
