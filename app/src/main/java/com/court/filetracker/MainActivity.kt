@@ -398,6 +398,17 @@ fun MainAppScreen(
                         onClick = {
                             scope.launch {
                                 val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
+
+                                // Check if any selected record lacks court dispatch details
+                                val invalidRecord = selectedRecords.find { 
+                                    it.courtNo.isBlank() || it.courtNo == "N/A" || it.serialNo.isBlank() 
+                                }
+
+                                if (invalidRecord != null && (bulkTargetStatus == "Pass Over" || bulkTargetStatus == "Taken Up" || bulkTargetStatus == "Received from Court")) {
+                                    Toast.makeText(context, "Cannot update status: File ${invalidRecord.fileNo} missing Court No, List Type, or Serial No!", Toast.LENGTH_LONG).show()
+                                    return@launch
+                                }
+
                                 val updatedList = selectedRecords.map { rec ->
                                     val logDetail = " | Court No: ${rec.courtNo} | Serial: ${rec.serialNo}"
                                     rec.copy(
@@ -618,16 +629,22 @@ fun MainAppScreen(
         }
     }
 
-    // DISPOSAL UPDATE MODAL
+    // DISPOSAL UPDATE MODAL WITH COURT DETAILS VALIDATION
     val currentRecordForUpdate = activeUpdateRecord
     if (currentRecordForUpdate != null) {
         var newStatus by remember { mutableStateOf("Taken Up") }
         var locInput by remember { mutableStateOf("") }
         var remarksUpdate by remember { mutableStateOf(currentRecordForUpdate.remarks) }
         var deleteReason by remember { mutableStateOf("") }
+        var validationError by remember { mutableStateOf<String?>(null) }
 
         val isDeleteMode = newStatus == "Entry Deleted"
-        val isSaveEnabled = !isDeleteMode || deleteReason.isNotBlank()
+        val isCourtStatus = newStatus == "Pass Over" || newStatus == "Taken Up" || newStatus == "Received from Court"
+
+        // Checks if file record has Court No, List Type, and Serial No filled in DB
+        val isCourtInfoMissing = currentRecordForUpdate.courtNo.isBlank() || 
+                                currentRecordForUpdate.courtNo == "N/A" || 
+                                currentRecordForUpdate.serialNo.isBlank()
 
         AlertDialog(
             onDismissRequest = { activeUpdateRecord = null },
@@ -638,8 +655,28 @@ fun MainAppScreen(
                     val options = listOf("Taken Up", "Pass Over", "Received from Court", "Not Sent to Court", "Entry Deleted")
                     options.forEach { opt ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = newStatus == opt, onClick = { newStatus = opt })
+                            RadioButton(
+                                selected = newStatus == opt, 
+                                onClick = { 
+                                    newStatus = opt
+                                    validationError = null 
+                                }
+                            )
                             Text(opt)
+                        }
+                    }
+
+                    if (isCourtStatus && isCourtInfoMissing) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        ) {
+                            Text(
+                                text = "⚠️ Cannot update to '$newStatus': This file has no Court Number, List Type, or Serial Number recorded in database. Please Re-Dispatch first.",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(8.dp)
+                            )
                         }
                     }
 
@@ -666,12 +703,27 @@ fun MainAppScreen(
                         label = { Text("Remarks") },
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                     )
+
+                    if (validationError != null) {
+                        Text(
+                            text = validationError!!,
+                            color = MaterialTheme.colorScheme.error,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 }
             },
             confirmButton = {
                 Button(
-                    enabled = isSaveEnabled,
+                    enabled = (!isDeleteMode || deleteReason.isNotBlank()),
                     onClick = {
+                        if (isCourtStatus && isCourtInfoMissing) {
+                            validationError = "Status change blocked! Court Number, List Type, and Serial Number must be registered first."
+                            Toast.makeText(context, "Cannot change status without Court Number & Serial Number!", Toast.LENGTH_LONG).show()
+                            return@Button
+                        }
+
                         scope.launch {
                             val courtInfoLog = if (currentRecordForUpdate.courtNo != "N/A") " | Court No: ${currentRecordForUpdate.courtNo} | Serial: ${currentRecordForUpdate.serialNo}" else ""
                             val logEntry = "[$dispatchDateInput] Status changed to '$newStatus'$courtInfoLog ${if (isDeleteMode) "Reason: $deleteReason" else "Loc: $locInput"}"
