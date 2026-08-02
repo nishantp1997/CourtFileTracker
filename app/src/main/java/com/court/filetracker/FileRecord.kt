@@ -18,12 +18,11 @@ fun normalizeDate(input: String): String {
     return "$day-$month-$year"
 }
 
-// Omits initial leading zeros from numeric strings or case numbers (e.g. 00123/2026 -> 123/2026, 04 -> 4)
+// Omits initial leading zeros from numeric strings or case numbers
 fun stripLeadingZeros(input: String): String {
     val trimmed = input.trim()
     if (trimmed.isBlank()) return ""
     
-    // Case Number format: Number/Year (e.g., 00123/2026 -> 123/2026)
     if (trimmed.contains("/")) {
         val parts = trimmed.split("/")
         if (parts.size == 2) {
@@ -32,7 +31,6 @@ fun stripLeadingZeros(input: String): String {
         }
     }
     
-    // Decimal/Numeric string format (e.g., 015.5 -> 15.5, 04 -> 4)
     if (trimmed.matches(Regex("^0+\\d+(\\.\\d+)?$"))) {
         return trimmed.replaceFirst(Regex("^0+"), "")
     }
@@ -51,11 +49,11 @@ fun normalizeSearchQuery(query: String): String {
 )
 data class FileRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val fileNo: String,                  // Unique Key (e.g. 1234/2026 - stripped leading zeros)
+    val fileNo: String,                  // Unique Key (e.g. 1234/2026)
     val dispatchDate: String,            // Latest active dispatch date (DD-MM-YY)
     val dispatchDatesCsv: String = "",   // All historical dispatch dates
-    val courtNo: String = "N/A",         // Active Court No. (Stripped leading zero)
-    val serialNo: String = "",           // List Type & Decimal Serial No. (Stripped leading zero)
+    val courtNo: String = "N/A",         // Active Court No.
+    val serialNo: String = "",           // List Type & Serial No.
     val status: String = "Dispatched",   // Active Status
     val storageLocation: String = "",   // Active Location
     val sentToChamber: Boolean = false,  // Active Chamber Flag
@@ -75,7 +73,6 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records WHERE fileNo = :fileNo LIMIT 1")
     suspend fun getRecordByFileNo(fileNo: String): FileRecord?
 
-    // Date Search Query: retrieves records dispatched on or historically associated with target date
     @Query("""
         SELECT * FROM file_records 
         WHERE (TRIM(dispatchDate) = TRIM(:date) 
@@ -95,12 +92,15 @@ interface FileRecordDao {
     """)
     fun getCourtsByDate(date: String): Flow<List<String>>
 
+    // Comprehensive Historical Query: Matches ANY file ever dispatched to courtNo on date
     @Query("""
         SELECT * FROM file_records 
-        WHERE (TRIM(dispatchDate) = TRIM(:date) 
-           OR dispatchDatesCsv LIKE '%' || TRIM(:date) || '%'
-           OR historyLog LIKE '%[' || TRIM(:date) || ']%') 
-        AND (TRIM(courtNo) = TRIM(:courtNo) OR LTRIM(courtNo, '0') = LTRIM(:courtNo, '0'))
+        WHERE (
+            (TRIM(dispatchDate) = TRIM(:date) AND (TRIM(courtNo) = TRIM(:courtNo) OR LTRIM(courtNo, '0') = LTRIM(:courtNo, '0')))
+            OR historyLog LIKE '%[' || TRIM(:date) || ']%Court No: ' || TRIM(:courtNo) || '%'
+            OR historyLog LIKE '%[' || TRIM(:date) || ']%Court No: ' || LTRIM(:courtNo, '0') || '%'
+            OR historyLog LIKE '%[' || TRIM(:date) || ']%' || TRIM(:courtNo) || '%'
+        )
         ORDER BY id ASC
     """)
     fun getRecordsByDateAndCourt(date: String, courtNo: String): Flow<List<FileRecord>>
@@ -108,7 +108,6 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records ORDER BY fileNo ASC")
     fun getAllRecords(): Flow<List<FileRecord>>
 
-    // Strict Zero-Ignored Keyword Search
     @Query("""
         SELECT * FROM file_records 
         WHERE fileNo LIKE '%' || :query || '%' 
@@ -125,7 +124,7 @@ interface FileRecordDao {
     fun searchRecords(query: String): Flow<List<FileRecord>>
 }
 
-@Database(entities = [FileRecord::class], version = 13, exportSchema = false)
+@Database(entities = [FileRecord::class], version = 16, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileRecordDao(): FileRecordDao
 
