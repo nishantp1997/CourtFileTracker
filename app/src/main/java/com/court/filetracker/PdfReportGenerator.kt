@@ -17,19 +17,16 @@ object PdfReportGenerator {
     private const val PAGE_WIDTH = 1008
     private const val PAGE_HEIGHT = 612
 
-    fun generateMasterReport(context: Context, rawRecords: List<FileRecord>) {
-        val validRecords = rawRecords.filter { it.fileNo.isNotBlank() }
-        generatePdf(context, "MASTER DATABASE LEDGER WITH COMPLETE AUDIT TRAIL", validRecords, isMaster = true)
+    fun generateMasterReport(context: Context, records: List<FileRecord>) {
+        generatePdf(context, "MASTER DATABASE LEDGER WITH COMPLETE AUDIT TRAIL", records, isMaster = true)
     }
 
     fun generateSingleFileReport(context: Context, record: FileRecord) {
-        if (record.fileNo.isBlank()) return
         generatePdf(context, "PARTICULAR CASE FILE HISTORY REPORT - ${record.fileNo}", listOf(record), isSingleFile = true)
     }
 
-    fun generateDateCourtReport(context: Context, date: String, courtNo: String, rawRecords: List<FileRecord>) {
-        val validRecords = rawRecords.filter { it.fileNo.isNotBlank() }
-        generatePdf(context, "DAILY COURT DISPATCH REPORT - COURT NO. $courtNo ($date)", validRecords, isDateCourt = true)
+    fun generateDateCourtReport(context: Context, date: String, courtNo: String, records: List<FileRecord>) {
+        generatePdf(context, "DAILY COURT DISPATCH REPORT - COURT NO. $courtNo ($date)", records, isDateCourt = true)
     }
 
     private fun generatePdf(
@@ -70,7 +67,7 @@ object PdfReportGenerator {
             y += 16f
             canvas.drawText("Storage Location: ${record.storageLocation.ifEmpty { "N/A" }}", 35f, y, paint)
             y += 16f
-            canvas.drawText("All Dispatch Dates: ${record.dispatchDatesCsv}", 35f, y, paint)
+            canvas.drawText("All Historical Dispatch Dates: ${record.dispatchDatesCsv}", 35f, y, paint)
             y += 16f
             canvas.drawText("Remarks: ${record.remarks.ifEmpty { "None" }}", 35f, y, paint)
             y += 20f
@@ -138,7 +135,7 @@ object PdfReportGenerator {
             canvas.drawText("S.No", 40f, y + 14f, headerPaint)
             canvas.drawText("File No.", 90f, y + 14f, headerPaint)
             canvas.drawText("List Type & Serial No.", 240f, y + 14f, headerPaint)
-            canvas.drawText("Status / Storage Location", 450f, y + 14f, headerPaint)
+            canvas.drawText("Current Status / Location", 450f, y + 14f, headerPaint)
             canvas.drawText("Remarks / Case Notes", 720f, y + 14f, headerPaint)
             y += 20f
 
