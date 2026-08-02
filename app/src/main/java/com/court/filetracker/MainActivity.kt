@@ -101,7 +101,7 @@ fun MainAppScreen(
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
     var selectedFileIds by remember { mutableStateOf(setOf<Long>()) }
 
-    // NEW: Bulk Location Screen States
+    // Bulk Location Screen States
     var bulkLocationCategory by remember { mutableStateOf("PASS_OVER") }
     var bulkLocSelectedIds by remember { mutableStateOf(setOf<Long>()) }
     var showSetLocationDialog by remember { mutableStateOf(false) }
@@ -116,54 +116,66 @@ fun MainAppScreen(
     val normalizedReportDate = remember(reportTargetDate) { normalizeDate(reportTargetDate) }
     val normalizedSearchFileNo = remember(searchFileNoInput) { normalizeSearchQuery(searchFileNoInput) }
 
-    // Strictly extracts the Court No. assigned SPECIFICALLY on targetDate from History Log
-    fun getCourtForDate(record: FileRecord, targetDate: String): String {
+    // STRICT FIX: Only return Court No if an EXPLICIT DISPATCH event occurred on targetDate
+    fun getDispatchedCourtForDate(record: FileRecord, targetDate: String): String {
         val logLines = record.historyLog.split("\n")
-        val dateLine = logLines.firstOrNull { it.contains("[$targetDate]") && it.contains("Court No:") }
-        if (dateLine != null) {
-            val match = Regex("Court No:\\s*(\\d+)").find(dateLine)
+        // Check for lines logged on targetDate specifically marked as DISPATCHED
+        val dispatchLine = logLines.firstOrNull { line ->
+            line.contains("[$targetDate]") && 
+            (line.contains("Registered as 'Dispatched'") || line.contains("Dispatched to Court")) &&
+            line.contains("Court No:")
+        }
+        
+        if (dispatchLine != null) {
+            val match = Regex("Court No:\\s*(\\d+)").find(dispatchLine)
             if (match != null) return stripLeadingZeros(match.groupValues[1])
         }
-        return if (record.dispatchDate == targetDate && record.courtNo != "N/A") stripLeadingZeros(record.courtNo) else "N/A"
+        
+        // Fallback: Check primary dispatch fields if date matches and status was Dispatched
+        if (record.dispatchDate == targetDate && record.courtNo != "N/A" && record.courtNo.isNotBlank()) {
+            return stripLeadingZeros(record.courtNo)
+        }
+        
+        return "N/A"
     }
 
     // Search Engine Data Flows
     val rawDateRecords by dao.getRecordsByDate(normalizedSearchDate).collectAsState(initial = emptyList())
     val searchCourtsList = remember(rawDateRecords, normalizedSearchDate) {
-        rawDateRecords.map { getCourtForDate(it, normalizedSearchDate) }
+        rawDateRecords.map { getDispatchedCourtForDate(it, normalizedSearchDate) }
             .filter { it != "N/A" && it.isNotBlank() }
             .distinct()
             .sortedBy { it.toIntOrNull() ?: 999 }
     }
     val searchCourtFiles = remember(rawDateRecords, searchSelectedCourt, normalizedSearchDate) {
         if (searchSelectedCourt == null) emptyList()
-        else rawDateRecords.filter { getCourtForDate(it, normalizedSearchDate) == searchSelectedCourt }
+        else rawDateRecords.filter { getDispatchedCourtForDate(it, normalizedSearchDate) == searchSelectedCourt }
     }
 
     // Bulk Operations Data Flows
     val rawBulkDateRecords by dao.getRecordsByDate(normalizedBulkDate).collectAsState(initial = emptyList())
     val bulkCourtsList = remember(rawBulkDateRecords, normalizedBulkDate) {
-        rawBulkDateRecords.map { getCourtForDate(it, normalizedBulkDate) }
+        rawBulkDateRecords.map { getDispatchedCourtForDate(it, normalizedBulkDate) }
             .filter { it != "N/A" && it.isNotBlank() }
             .distinct()
             .sortedBy { it.toIntOrNull() ?: 999 }
     }
     val bulkCourtFiles = remember(rawBulkDateRecords, bulkSelectedCourtChip, normalizedBulkDate) {
         if (bulkSelectedCourtChip == null) emptyList()
-        else rawBulkDateRecords.filter { getCourtForDate(it, normalizedBulkDate) == bulkSelectedCourtChip }
+        else rawBulkDateRecords.filter { getDispatchedCourtForDate(it, normalizedBulkDate) == bulkSelectedCourtChip }
     }
 
     // PDF Reports Panel Data Flows
     val rawReportDateRecords by dao.getRecordsByDate(normalizedReportDate).collectAsState(initial = emptyList())
     val reportCourtsList = remember(rawReportDateRecords, normalizedReportDate) {
-        rawReportDateRecords.map { getCourtForDate(it, normalizedReportDate) }
+        rawReportDateRecords.map { getDispatchedCourtForDate(it, normalizedReportDate) }
             .filter { it != "N/A" && it.isNotBlank() }
             .distinct()
             .sortedBy { it.toIntOrNull() ?: 999 }
     }
     val reportCourtFiles = remember(rawReportDateRecords, reportSelectedCourtChip, normalizedReportDate) {
         if (reportSelectedCourtChip == null) emptyList()
-        else rawReportDateRecords.filter { getCourtForDate(it, normalizedReportDate) == reportSelectedCourtChip }
+        else rawReportDateRecords.filter { getDispatchedCourtForDate(it, normalizedReportDate) == reportSelectedCourtChip }
     }
 
     // Other Search Flows
@@ -172,7 +184,7 @@ fun MainAppScreen(
     val chamberFiles = remember(allDbRecords) { allDbRecords.filter { it.sentToChamber || it.status.contains("Chamber", ignoreCase = true) } }
     val takenUpFiles = remember(allDbRecords) { allDbRecords.filter { it.status == "Taken Up" } }
 
-    // NEW: Bulk Location Data Filter Rules
+    // Bulk Location Data Filter Rules
     val bulkLocationFilteredFiles = remember(allDbRecords, bulkLocationCategory) {
         allDbRecords.filter { rec ->
             val isLocEmpty = rec.storageLocation.isBlank() || rec.storageLocation.trim().equals("N/A", ignoreCase = true)
@@ -294,7 +306,6 @@ fun MainAppScreen(
             Column(modifier = Modifier.padding(padding).padding(12.dp)) {
 
                 if (currentView == "BULK_LOCATION") {
-                    // NEW: BULK LOCATION VIEW IMPLEMENTATION
                     Text("Select Unassigned Category:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
 
                     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -451,10 +462,10 @@ fun MainAppScreen(
                             if (searchSelectedCourt == null) {
                                 Text("Please select a Court Number chip above to view case files.", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
                             } else {
-                                Text("Files in Court $searchSelectedCourt on $normalizedSearchDate (${searchCourtFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
+                                Text("Files Dispatched to Court $searchSelectedCourt on $normalizedSearchDate (${searchCourtFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
                                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     items(searchCourtFiles) { record ->
-                                        val courtForThisDate = getCourtForDate(record, normalizedSearchDate)
+                                        val courtForThisDate = getDispatchedCourtForDate(record, normalizedSearchDate)
                                         Card(
                                             modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
                                             colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
@@ -731,11 +742,10 @@ fun MainAppScreen(
                                     val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
 
                                     val updatedList = selectedRecords.map { rec ->
-                                        val logDetail = " | Court No: ${rec.courtNo} | Serial: ${rec.serialNo}"
                                         rec.copy(
                                             status = bulkTargetStatus,
                                             storageLocation = "",
-                                            historyLog = "${rec.historyLog}\n[$normalizedBulkDate] Bulk Status changed to '$bulkTargetStatus'$logDetail"
+                                            historyLog = "${rec.historyLog}\n[$normalizedBulkDate] Bulk Status changed to '$bulkTargetStatus'"
                                         )
                                     }
                                     dao.insertOrUpdateAll(updatedList)
@@ -964,7 +974,7 @@ fun MainAppScreen(
         }
     }
 
-    // NEW: SET BULK LOCATION DIALOG IMPLEMENTATION
+    // SET BULK LOCATION DIALOG
     if (showSetLocationDialog) {
         var inputLocText by remember { mutableStateOf("") }
         var dropdownExpanded by remember { mutableStateOf(false) }
@@ -1186,8 +1196,8 @@ fun MainAppScreen(
                         }
 
                         scope.launch {
-                            val courtInfoLog = if (currentRecordForUpdate.courtNo != "N/A") " | Court No: ${currentRecordForUpdate.courtNo} | Serial: ${currentRecordForUpdate.serialNo}" else ""
-                            val logEntry = "[$dispatchDateInput] Status changed to '$newStatus'$courtInfoLog ${if (isDeleteMode) "Reason: $deleteReason" else "Loc: $locInput"}"
+                            // Status changes omit "Court No:" keyword to prevent generating spurious historical court chips
+                            val logEntry = "[$dispatchDateInput] Status changed to '$newStatus' ${if (isDeleteMode) "Reason: $deleteReason" else "Loc: $locInput"}"
 
                             val updated = currentRecordForUpdate.copy(
                                 status = newStatus,
