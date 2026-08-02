@@ -97,7 +97,7 @@ fun MainAppScreen(
     var reportTargetDate by remember { mutableStateOf(currentDate) }
     var reportTargetCourtNo by remember { mutableStateOf("") }
 
-    // Bulk Operations Mode (Preserved & Untouched)
+    // Bulk Operations Mode
     var bulkDateInput by remember { mutableStateOf(currentDate) }
     var bulkCourtNo by remember { mutableStateOf("") }
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
@@ -117,7 +117,7 @@ fun MainAppScreen(
     val recordsList by dao.getRecordsByDate(normalizeDate(dispatchDateInput)).collectAsState(initial = emptyList())
     val rawDateRecords by dao.getRecordsByDate(normalizedSearchDate).collectAsState(initial = emptyList())
 
-    // Helper to extract which court a record was dispatched to on a SPECIFIC date
+    // Helper: Gets the Court Number associated with a file on targetDate
     fun getCourtForDate(record: FileRecord, targetDate: String): String {
         val logLines = record.historyLog.split("\n")
         val dateLine = logLines.lastOrNull { it.contains("[$targetDate]") && it.contains("Court No:") }
@@ -125,10 +125,11 @@ fun MainAppScreen(
             val match = Regex("Court No:\\s*(\\d+)").find(dateLine)
             if (match != null) return stripLeadingZeros(match.groupValues[1])
         }
-        return if (record.dispatchDate == targetDate && record.courtNo != "N/A") stripLeadingZeros(record.courtNo) else "N/A"
+        return if (record.dispatchDatesCsv.contains(targetDate) || record.dispatchDate == targetDate) {
+            if (record.courtNo != "N/A") stripLeadingZeros(record.courtNo) else "N/A"
+        } else "N/A"
     }
 
-    // Dynamic Filter: Extracts ONLY Courts that actually received files on normalizedSearchDate
     val searchCourtsList = remember(rawDateRecords, normalizedSearchDate) {
         rawDateRecords.map { getCourtForDate(it, normalizedSearchDate) }
             .filter { it != "N/A" && it.isNotBlank() }
@@ -136,7 +137,6 @@ fun MainAppScreen(
             .sortedBy { it.toIntOrNull() ?: 999 }
     }
 
-    // Dynamic File List matching date + court
     val searchCourtFiles = remember(rawDateRecords, searchSelectedCourt, normalizedSearchDate) {
         if (searchSelectedCourt == null) {
             rawDateRecords.filter { getCourtForDate(it, normalizedSearchDate) != "N/A" }
@@ -145,6 +145,7 @@ fun MainAppScreen(
         }
     }
 
+    // Complete Unfiltered Bulk Operations Flow
     val bulkCourtFiles by (if (bulkCourtNo.isNotBlank()) dao.getRecordsByDateAndCourt(normalizedBulkDate, stripLeadingZeros(bulkCourtNo)) else dao.getRecordsByDate(normalizedBulkDate)).collectAsState(initial = emptyList())
     
     // Search Flows
@@ -289,7 +290,7 @@ fun MainAppScreen(
                                 }
                             }
 
-                            val targetTitle = if (searchSelectedCourt != null) "Files in Court $searchSelectedCourt on $normalizedSearchDate" else "All Files Dispatched on $normalizedSearchDate"
+                            val targetTitle = if (searchSelectedCourt != null) "Files Dispatched to Court $searchSelectedCourt on $normalizedSearchDate" else "All Files Dispatched on $normalizedSearchDate"
                             Text(targetTitle, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
 
                             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -302,8 +303,8 @@ fun MainAppScreen(
                                         Column(modifier = Modifier.padding(12.dp)) {
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                                 Text("File: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                                Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
-                                                    Text(record.status, color = Color.White)
+                                                Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else if (record.sentToChamber) Color(0xFF9C27B0) else MaterialTheme.colorScheme.primary) {
+                                                    Text(if (record.sentToChamber) "Chamber: ${record.judgeName}" else record.status, color = Color.White)
                                                 }
                                             }
                                             Text("Dispatched Court on $normalizedSearchDate: Court $courtForThisDate", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -540,15 +541,6 @@ fun MainAppScreen(
                             scope.launch {
                                 val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
 
-                                val invalidRecord = selectedRecords.find { 
-                                    it.courtNo.isBlank() || it.courtNo == "N/A" || it.serialNo.isBlank() 
-                                }
-
-                                if (invalidRecord != null && (bulkTargetStatus == "Pass Over" || bulkTargetStatus == "Taken Up" || bulkTargetStatus == "Received from Court")) {
-                                    Toast.makeText(context, "Cannot update status: File ${invalidRecord.fileNo} missing Court No, List Type, or Serial No!", Toast.LENGTH_LONG).show()
-                                    return@launch
-                                }
-
                                 val updatedList = selectedRecords.map { rec ->
                                     val logDetail = " | Court No: ${rec.courtNo} | Serial: ${rec.serialNo}"
                                     rec.copy(
@@ -575,7 +567,7 @@ fun MainAppScreen(
                                         selectedFileIds = if (isChecked) selectedFileIds + record.id else selectedFileIds - record.id
                                     }
                                 )
-                                Text("${record.fileNo} (${record.serialNo}) - Status: ${record.status}")
+                                Text("${record.fileNo} (${record.serialNo}) - Current Status: ${record.status}")
                             }
                         }
                     }
