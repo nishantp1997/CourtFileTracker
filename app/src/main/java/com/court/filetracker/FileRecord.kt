@@ -12,11 +12,11 @@ data class FileRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val fileNo: String,                  // Unique Key (e.g. 1234/2026)
     val dispatchDate: String,            // Latest active dispatch date (DD-MM-YY)
-    val dispatchDatesCsv: String = "",   // All historical dispatch dates (CSV format)
+    val dispatchDatesCsv: String = "",   // All historical dispatch dates (e.g. "01-08-26, 02-08-26")
     val courtNo: String = "N/A",         // Active Court No. (Integer string)
-    val serialNo: String = "",           // List Type & Decimal Serial No. (e.g. DCL - 15.5)
+    val serialNo: String = "",           // List Type & Decimal Serial No. (e.g. ACL - 15.5)
     val status: String = "Dispatched",   // Active Status
-    val storageLocation: String = "",   // Active Location (Shelf/Bundle/Person/Seat)
+    val storageLocation: String = "",   // Active Location (Shelf/Bundle/Person/Seat/Chamber)
     val sentToChamber: Boolean = false,  // Active Chamber Flag
     val judgeName: String = "",          // Hon'ble Judge Name
     val remarks: String = "",            // Case Notes
@@ -34,13 +34,13 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records WHERE fileNo = :fileNo LIMIT 1")
     suspend fun getRecordByFileNo(fileNo: String): FileRecord?
 
-    @Query("SELECT * FROM file_records WHERE dispatchDatesCsv LIKE '%' || :date || '%' AND status != 'Entry Deleted' ORDER BY id DESC")
+    @Query("SELECT * FROM file_records WHERE (TRIM(dispatchDate) = TRIM(:date) OR dispatchDatesCsv LIKE '%' || TRIM(:date) || '%') AND status != 'Entry Deleted' ORDER BY id DESC")
     fun getRecordsByDate(date: String): Flow<List<FileRecord>>
 
-    @Query("SELECT DISTINCT courtNo FROM file_records WHERE dispatchDatesCsv LIKE '%' || :date || '%' AND status != 'Entry Deleted' AND courtNo != 'N/A' ORDER BY courtNo ASC")
+    @Query("SELECT DISTINCT TRIM(courtNo) FROM file_records WHERE (TRIM(dispatchDate) = TRIM(:date) OR dispatchDatesCsv LIKE '%' || TRIM(:date) || '%') AND status != 'Entry Deleted' AND courtNo != 'N/A' ORDER BY courtNo ASC")
     fun getCourtsByDate(date: String): Flow<List<String>>
 
-    @Query("SELECT * FROM file_records WHERE dispatchDatesCsv LIKE '%' || :date || '%' AND courtNo = :courtNo AND status != 'Entry Deleted' ORDER BY id ASC")
+    @Query("SELECT * FROM file_records WHERE (TRIM(dispatchDate) = TRIM(:date) OR dispatchDatesCsv LIKE '%' || TRIM(:date) || '%') AND TRIM(courtNo) = TRIM(:courtNo) AND status != 'Entry Deleted' ORDER BY id ASC")
     fun getRecordsByDateAndCourt(date: String, courtNo: String): Flow<List<FileRecord>>
 
     @Query("SELECT * FROM file_records ORDER BY fileNo ASC")
@@ -50,7 +50,7 @@ interface FileRecordDao {
     fun searchRecords(query: String): Flow<List<FileRecord>>
 }
 
-@Database(entities = [FileRecord::class], version = 6, exportSchema = false)
+@Database(entities = [FileRecord::class], version = 9, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileRecordDao(): FileRecordDao
 
