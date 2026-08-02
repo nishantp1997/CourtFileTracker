@@ -125,7 +125,7 @@ interface FileRecordDao {
     fun searchRecords(query: String): Flow<List<FileRecord>>
 }
 
-@Database(entities = [FileRecord::class], version = 14, exportSchema = false)
+@Database(entities = [FileRecord::class], version = 15, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileRecordDao(): FileRecordDao
 
