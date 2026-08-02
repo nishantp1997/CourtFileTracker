@@ -32,7 +32,13 @@ object PdfReportGenerator {
 
     fun generateDateCourtReport(context: Context, date: String, courtNo: String, rawRecords: List<FileRecord>) {
         val validRecords = rawRecords.filter { it.fileNo.isNotBlank() }
-        generatePdf(context, "DAILY COURT DISPATCH REPORT - COURT NO. $courtNo ($date)", validRecords, isDateCourt = true)
+        generatePdf(
+            context = context, 
+            reportTitle = "DAILY COURT DISPATCH REPORT - COURT NO. $courtNo ($date)", 
+            records = validRecords, 
+            dateContext = date, 
+            isDateCourt = true
+        )
     }
 
     private fun wrapText(text: String, paint: Paint, maxWidth: Float): List<String> {
@@ -69,17 +75,31 @@ object PdfReportGenerator {
         if (currentLine.isNotEmpty()) {
             lines.add(currentLine.toString())
         }
-        return lines
+        return lines.ifEmpty { listOf("") }
+    }
+
+    // Helper: Extracts historical Serial Number logged on targetDate
+    private fun getHistoricalSerialNo(record: FileRecord, targetDate: String): String {
+        val logLines = record.historyLog.split("\n")
+        val dateLine = logLines.firstOrNull { it.contains("[$targetDate]") && it.contains("Serial:") }
+        if (dateLine != null) {
+            val match = Regex("Serial:\\s*([^|]+)").find(dateLine)
+            if (match != null) return match.groupValues[1].trim()
+        }
+        return record.serialNo.ifEmpty { "N/A" }
     }
 
     private fun generatePdf(
         context: Context,
         reportTitle: String,
         records: List<FileRecord>,
+        dateContext: String = "",
         isMaster: Boolean = false,
         isSingleFile: Boolean = false,
         isDateCourt: Boolean = false
     ) {
+        if (records.isEmpty() && !isSingleFile) return
+
         val pdfDocument = PdfDocument()
         val pageInfo = PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, 1).create()
         var page = pdfDocument.startPage(pageInfo)
@@ -128,14 +148,23 @@ object PdfReportGenerator {
             y += 18f
             canvas.drawText("Current Status: ${record.status}", MARGIN_LEFT, y, boldPaint)
             y += 15f
-            canvas.drawText("Court No: ${record.courtNo} | Serial/List: ${record.serialNo}", MARGIN_LEFT, y, paint)
-            y += 15f
-            canvas.drawText("Storage Location: ${record.storageLocation.ifEmpty { "N/A" }}", MARGIN_LEFT, y, paint)
-            y += 15f
-            canvas.drawText("All Historical Dispatch Dates: ${record.dispatchDatesCsv}", MARGIN_LEFT, y, paint)
-            y += 15f
-            canvas.drawText("Remarks: ${record.remarks.ifEmpty { "None" }}", MARGIN_LEFT, y, paint)
-            y += 18f
+            if (record.courtNo.isNotBlank() && record.courtNo != "N/A") {
+                canvas.drawText("Court No: ${record.courtNo} | Serial/List: ${record.serialNo}", MARGIN_LEFT, y, paint)
+                y += 15f
+            }
+            if (record.storageLocation.isNotBlank()) {
+                canvas.drawText("Storage Location: ${record.storageLocation}", MARGIN_LEFT, y, paint)
+                y += 15f
+            }
+            if (record.dispatchDatesCsv.isNotBlank()) {
+                canvas.drawText("All Historical Dispatch Dates: ${record.dispatchDatesCsv}", MARGIN_LEFT, y, paint)
+                y += 15f
+            }
+            if (record.remarks.isNotBlank()) {
+                canvas.drawText("Remarks: ${record.remarks}", MARGIN_LEFT, y, paint)
+                y += 15f
+            }
+            y += 5f
             canvas.drawLine(MARGIN_LEFT, y, MARGIN_RIGHT, y, borderPaint)
             y += 18f
             canvas.drawText("Complete Audit Stack Trace Log:", MARGIN_LEFT, y, titlePaint)
@@ -161,11 +190,11 @@ object PdfReportGenerator {
 
             records.forEachIndexed { idx, record ->
                 val statusText = if (record.status == "Entry Deleted") "[DELETED]" else "${record.status} (${record.storageLocation.ifEmpty { "Court " + record.courtNo }})"
-                
+
                 val col1Lines = wrapText(record.fileNo, boldPaint, 110f)
                 val col2Lines = wrapText(statusText, paint, 210f)
                 val col3Lines = wrapText(record.dispatchDatesCsv, paint, 160f)
-                
+
                 val historyRaw = record.historyLog.split("\n").filter { it.isNotBlank() }
                 val col4Lines = mutableListOf<String>()
                 historyRaw.forEach { hLine ->
@@ -188,21 +217,10 @@ object PdfReportGenerator {
                     canvas.drawRect(MARGIN_LEFT, startY, MARGIN_RIGHT, startY + rowHeight, altRowBgPaint)
                 }
 
-                col1Lines.forEachIndexed { i, line ->
-                    canvas.drawText(line, 40f, startY + 12f + (i * 13f), boldPaint)
-                }
-
-                col2Lines.forEachIndexed { i, line ->
-                    canvas.drawText(line, 160f, startY + 12f + (i * 13f), paint)
-                }
-
-                col3Lines.forEachIndexed { i, line ->
-                    canvas.drawText(line, 380f, startY + 12f + (i * 13f), paint)
-                }
-
-                col4Lines.forEachIndexed { i, line ->
-                    canvas.drawText(line, 550f, startY + 12f + (i * 13f), paint)
-                }
+                col1Lines.forEachIndexed { i, line -> canvas.drawText(line, 40f, startY + 12f + (i * 13f), boldPaint) }
+                col2Lines.forEachIndexed { i, line -> canvas.drawText(line, 160f, startY + 12f + (i * 13f), paint) }
+                col3Lines.forEachIndexed { i, line -> canvas.drawText(line, 380f, startY + 12f + (i * 13f), paint) }
+                col4Lines.forEachIndexed { i, line -> canvas.drawText(line, 550f, startY + 12f + (i * 13f), paint) }
 
                 y += rowHeight
                 canvas.drawLine(MARGIN_LEFT, y, MARGIN_RIGHT, y, borderPaint)
@@ -212,8 +230,9 @@ object PdfReportGenerator {
             y = drawTableHeader(canvas, y)
 
             records.forEachIndexed { index, record ->
-                val serialText = record.serialNo.ifEmpty { "N/A" }
-                val locText = if (record.sentToChamber) "Chamber: ${record.judgeName}" else record.storageLocation.ifEmpty { record.status }
+                // Uses targetDate historical serial extraction
+                val serialText = getHistoricalSerialNo(record, dateContext)
+                val locText = if (record.sentToChamber) "Chamber: ${record.judgeName}" else if (record.status == "Entry Deleted") "[DELETED]" else record.storageLocation.ifEmpty { record.status }
                 val remarksText = record.remarks.ifEmpty { "-" }
 
                 val col1Lines = listOf("${index + 1}")
