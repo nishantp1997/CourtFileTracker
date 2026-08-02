@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 
-// Date normalization helper: converts 4-8-2026, 04-8-26, etc. to standardized DD-MM-YY
+// Normalizes dates (e.g. 4-8-2026 -> 04-08-26)
 fun normalizeDate(input: String): String {
     val clean = input.trim().replace("/", "-")
     val parts = clean.split("-")
@@ -18,10 +18,31 @@ fun normalizeDate(input: String): String {
     return "$day-$month-$year"
 }
 
-// Utility to normalize search tokens by trimming leading zeros from numeric strings
+// Omits initial leading zeros from numeric strings or case numbers (e.g. 00123/2026 -> 123/2026, 04 -> 4)
+fun stripLeadingZeros(input: String): String {
+    val trimmed = input.trim()
+    if (trimmed.isBlank()) return ""
+    
+    // Case Number format: Number/Year (e.g., 00123/2026 -> 123/2026)
+    if (trimmed.contains("/")) {
+        val parts = trimmed.split("/")
+        if (parts.size == 2) {
+            val caseNum = parts[0].replaceFirst(Regex("^0+"), "").ifEmpty { "0" }
+            return "$caseNum/${parts[1]}"
+        }
+    }
+    
+    // Decimal/Numeric string format (e.g., 015.5 -> 15.5, 04 -> 4)
+    if (trimmed.matches(Regex("^0+\\d+(\\.\\d+)?$"))) {
+        return trimmed.replaceFirst(Regex("^0+"), "")
+    }
+    
+    return trimmed
+}
+
+// Search normalization helper
 fun normalizeSearchQuery(query: String): String {
-    val trimmed = query.trim()
-    return if (trimmed.matches(Regex("^0+\\d+$"))) trimmed.replaceFirst(Regex("^0+"), "") else trimmed
+    return stripLeadingZeros(query)
 }
 
 @Entity(
@@ -30,13 +51,13 @@ fun normalizeSearchQuery(query: String): String {
 )
 data class FileRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val fileNo: String,                  // Unique Key (e.g. 1234/2026)
+    val fileNo: String,                  // Unique Key (e.g. 1234/2026 - stripped leading zeros)
     val dispatchDate: String,            // Latest active dispatch date (DD-MM-YY)
-    val dispatchDatesCsv: String = "",   // All historical dispatch dates (CSV format)
-    val courtNo: String = "N/A",         // Active Court No. (Integer string)
-    val serialNo: String = "",           // List Type & Decimal Serial No. (e.g. DCL - 15.5)
+    val dispatchDatesCsv: String = "",   // All historical dispatch dates
+    val courtNo: String = "N/A",         // Active Court No. (Stripped leading zero)
+    val serialNo: String = "",           // List Type & Decimal Serial No. (Stripped leading zero)
     val status: String = "Dispatched",   // Active Status
-    val storageLocation: String = "",   // Active Location (Shelf/Bundle/Person/Seat/Chamber)
+    val storageLocation: String = "",   // Active Location
     val sentToChamber: Boolean = false,  // Active Chamber Flag
     val judgeName: String = "",          // Hon'ble Judge Name
     val remarks: String = "",            // Case Notes
@@ -80,15 +101,13 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records ORDER BY fileNo ASC")
     fun getAllRecords(): Flow<List<FileRecord>>
 
-    // Strict Zero-Ignored Keyword Search across Case No, Court No, Serial No, Status & Remarks
     @Query("""
         SELECT * FROM file_records 
         WHERE fileNo LIKE '%' || :query || '%' 
-           OR LTRIM(fileNo, '0') LIKE '%' || LTRIM(:query, '0') || '%'
+           OR LTRIM(fileNo, '0') LIKE '%' || :query || '%'
            OR courtNo LIKE '%' || :query || '%' 
-           OR LTRIM(courtNo, '0') LIKE '%' || LTRIM(:query, '0') || '%'
+           OR LTRIM(courtNo, '0') LIKE '%' || :query || '%'
            OR serialNo LIKE '%' || :query || '%'
-           OR LTRIM(serialNo, '0') LIKE '%' || LTRIM(:query, '0') || '%'
            OR status LIKE '%' || :query || '%' 
            OR storageLocation LIKE '%' || :query || '%' 
            OR judgeName LIKE '%' || :query || '%' 
