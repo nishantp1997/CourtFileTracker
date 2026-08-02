@@ -97,7 +97,7 @@ fun MainAppScreen(
     var reportTargetDate by remember { mutableStateOf(currentDate) }
     var reportTargetCourtNo by remember { mutableStateOf("") }
 
-    // Bulk Operations Mode
+    // Bulk Operations Mode (Preserved & Untouched)
     var bulkDateInput by remember { mutableStateOf(currentDate) }
     var bulkCourtNo by remember { mutableStateOf("") }
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
@@ -115,8 +115,36 @@ fun MainAppScreen(
 
     // Data Flows
     val recordsList by dao.getRecordsByDate(normalizeDate(dispatchDateInput)).collectAsState(initial = emptyList())
-    val searchCourtsList by dao.getCourtsByDate(normalizedSearchDate).collectAsState(initial = emptyList())
-    val searchCourtFiles by (searchSelectedCourt?.let { dao.getRecordsByDateAndCourt(normalizedSearchDate, it) } ?: dao.getRecordsByDate(normalizedSearchDate)).collectAsState(initial = emptyList())
+    val rawDateRecords by dao.getRecordsByDate(normalizedSearchDate).collectAsState(initial = emptyList())
+
+    // Helper to extract which court a record was dispatched to on a SPECIFIC date
+    fun getCourtForDate(record: FileRecord, targetDate: String): String {
+        val logLines = record.historyLog.split("\n")
+        val dateLine = logLines.lastOrNull { it.contains("[$targetDate]") && it.contains("Court No:") }
+        if (dateLine != null) {
+            val match = Regex("Court No:\\s*(\\d+)").find(dateLine)
+            if (match != null) return stripLeadingZeros(match.groupValues[1])
+        }
+        return if (record.dispatchDate == targetDate && record.courtNo != "N/A") stripLeadingZeros(record.courtNo) else "N/A"
+    }
+
+    // Dynamic Filter: Extracts ONLY Courts that actually received files on normalizedSearchDate
+    val searchCourtsList = remember(rawDateRecords, normalizedSearchDate) {
+        rawDateRecords.map { getCourtForDate(it, normalizedSearchDate) }
+            .filter { it != "N/A" && it.isNotBlank() }
+            .distinct()
+            .sortedBy { it.toIntOrNull() ?: 999 }
+    }
+
+    // Dynamic File List matching date + court
+    val searchCourtFiles = remember(rawDateRecords, searchSelectedCourt, normalizedSearchDate) {
+        if (searchSelectedCourt == null) {
+            rawDateRecords.filter { getCourtForDate(it, normalizedSearchDate) != "N/A" }
+        } else {
+            rawDateRecords.filter { getCourtForDate(it, normalizedSearchDate) == searchSelectedCourt }
+        }
+    }
+
     val bulkCourtFiles by (if (bulkCourtNo.isNotBlank()) dao.getRecordsByDateAndCourt(normalizedBulkDate, stripLeadingZeros(bulkCourtNo)) else dao.getRecordsByDate(normalizedBulkDate)).collectAsState(initial = emptyList())
     
     // Search Flows
@@ -266,6 +294,7 @@ fun MainAppScreen(
 
                             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(searchCourtFiles) { record ->
+                                    val courtForThisDate = getCourtForDate(record, normalizedSearchDate)
                                     Card(
                                         modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
                                         colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
@@ -277,8 +306,8 @@ fun MainAppScreen(
                                                     Text(record.status, color = Color.White)
                                                 }
                                             }
-                                            Text("Court No: ${record.courtNo} | Serial: ${record.serialNo}", fontSize = 12.sp)
-                                            if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
+                                            Text("Dispatched Court on $normalizedSearchDate: Court $courtForThisDate", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                            Text("Current Status: ${record.status} | Location: ${record.storageLocation.ifEmpty { "N/A" }}", fontSize = 12.sp)
                                             if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
 
                                             Button(
@@ -678,14 +707,10 @@ fun MainAppScreen(
                                             else -> "$existingCsv, $cleanDate"
                                         }
 
-                                        // Rule 1: Strip leading zeros from Court No and Serial No
                                         val cleanCourtNo = if (isDispatched) stripLeadingZeros(courtNoInput) else "N/A"
                                         val cleanSerialVal = if (isDispatched) stripLeadingZeros(serialNoInput) else ""
                                         val serialFormatted = if (isDispatched) "$listTypeInput - $cleanSerialVal" else ""
 
-                                        // Rule 2: Chamber vs Dispatched Mutual Exclusivity
-                                        // - If Sent to Chamber: Court No, Serial No, List Type removed
-                                        // - If Re-Dispatched: Chamber status set to false, Judge Name removed
                                         val dispatchDetails = if (isDispatched) " | Court No: $cleanCourtNo | Serial: $serialFormatted" else ""
                                         val logRemark = if (remarksInput.isNotBlank()) " | Remarks: ${remarksInput.trim()}" else ""
 
@@ -759,7 +784,6 @@ fun MainAppScreen(
         var deleteReason by remember { mutableStateOf("") }
         var validationError by remember { mutableStateOf<String?>(null) }
 
-        // Dropdown state for "Received from Court" choices
         var receivedDropdownExpanded by remember { mutableStateOf(false) }
         val receivedLocationOptions = listOf("Listing Seat", "Disposal/Compliance Seat", "Shelf")
 
@@ -806,7 +830,6 @@ fun MainAppScreen(
                         }
                     }
 
-                    // Rule 3: 3 Mandatory Options for "Received from Court"
                     if (isReceivedMode) {
                         Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
                             OutlinedTextField(
