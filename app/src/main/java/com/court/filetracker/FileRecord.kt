@@ -51,11 +51,11 @@ fun normalizeSearchQuery(query: String): String {
 )
 data class FileRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val fileNo: String,                  // Unique Key (e.g. 1234/2026)
+    val fileNo: String,                  // Unique Key (e.g. 1234/2026 - stripped leading zeros)
     val dispatchDate: String,            // Latest active dispatch date (DD-MM-YY)
     val dispatchDatesCsv: String = "",   // All historical dispatch dates
-    val courtNo: String = "N/A",         // Active Court No.
-    val serialNo: String = "",           // List Type & Serial No.
+    val courtNo: String = "N/A",         // Active Court No. (Stripped leading zero)
+    val serialNo: String = "",           // List Type & Decimal Serial No. (Stripped leading zero)
     val status: String = "Dispatched",   // Active Status
     val storageLocation: String = "",   // Active Location
     val sentToChamber: Boolean = false,  // Active Chamber Flag
@@ -75,6 +75,7 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records WHERE fileNo = :fileNo LIMIT 1")
     suspend fun getRecordByFileNo(fileNo: String): FileRecord?
 
+    // Date Search Query: retrieves all records dispatched on or historically associated with target date
     @Query("""
         SELECT * FROM file_records 
         WHERE (TRIM(dispatchDate) = TRIM(:date) 
@@ -107,6 +108,7 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records ORDER BY fileNo ASC")
     fun getAllRecords(): Flow<List<FileRecord>>
 
+    // Strict Zero-Ignored Keyword Search
     @Query("""
         SELECT * FROM file_records 
         WHERE fileNo LIKE '%' || :query || '%' 
@@ -123,7 +125,7 @@ interface FileRecordDao {
     fun searchRecords(query: String): Flow<List<FileRecord>>
 }
 
-@Database(entities = [FileRecord::class], version = 16, exportSchema = false)
+@Database(entities = [FileRecord::class], version = 13, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileRecordDao(): FileRecordDao
 
