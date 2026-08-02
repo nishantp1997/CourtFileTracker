@@ -96,7 +96,7 @@ fun MainAppScreen(
     var reportTargetDate by remember { mutableStateOf(currentDate) }
     var reportTargetCourtNo by remember { mutableStateOf("") }
 
-    // Bulk Operations Mode (Preserved & Locked)
+    // Bulk Operations Mode
     var bulkDateInput by remember { mutableStateOf(currentDate) }
     var bulkCourtNo by remember { mutableStateOf("") }
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
@@ -112,7 +112,7 @@ fun MainAppScreen(
     val normalizedReportDate = remember(reportTargetDate) { normalizeDate(reportTargetDate) }
     val normalizedSearchKeyword = remember(globalKeywordSearch) { normalizeSearchQuery(globalKeywordSearch) }
 
-    // Data Flows for UI Listing (Read-only UI Display)
+    // Data Flows
     val recordsList by dao.getRecordsByDate(normalizeDate(dispatchDateInput)).collectAsState(initial = emptyList())
     val searchCourtsList by dao.getCourtsByDate(normalizedSearchDate).collectAsState(initial = emptyList())
     val searchCourtFiles by (searchSelectedCourt?.let { dao.getRecordsByDateAndCourt(normalizedSearchDate, it) } ?: dao.getRecordsByDate(normalizedSearchDate)).collectAsState(initial = emptyList())
@@ -128,38 +128,38 @@ fun MainAppScreen(
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                     NavigationDrawerItem(
-                        label = { Text("🔍 Filter by Date & Court") },
+                        label = { Text("Filter by Date & Court") },
                         selected = currentView == "SEARCH_DATE_COURT",
                         onClick = { currentView = "SEARCH_DATE_COURT"; scope.launch { drawerState.close() } },
                         icon = { Icon(Icons.Default.Search, contentDescription = null) }
                     )
                     NavigationDrawerItem(
-                        label = { Text("⚡ Bulk Operations") },
+                        label = { Text("Bulk Operations") },
                         selected = currentView == "BULK",
                         onClick = { currentView = "BULK"; scope.launch { drawerState.close() } },
                         icon = { Icon(Icons.Default.List, contentDescription = null) }
                     )
                     NavigationDrawerItem(
-                        label = { Text("📄 PDF Reports Engine") },
+                        label = { Text("PDF Reports Engine") },
                         selected = currentView == "REPORTS_PANEL",
                         onClick = { currentView = "REPORTS_PANEL"; scope.launch { drawerState.close() } },
                         icon = { Icon(Icons.Default.Share, contentDescription = null) }
                     )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                     NavigationDrawerItem(
-                        label = { Text("🔑 Connect Google Drive") },
+                        label = { Text("Connect Google Drive") },
                         selected = false,
                         onClick = { onGoogleDriveLogin(); scope.launch { drawerState.close() } },
                         icon = { Icon(Icons.Default.AccountCircle, contentDescription = null) }
                     )
                     NavigationDrawerItem(
-                        label = { Text("☁️ Google Drive Backup") },
+                        label = { Text("Google Drive Backup") },
                         selected = false,
                         onClick = { onBackup(); scope.launch { drawerState.close() } },
                         icon = { Icon(Icons.Default.ArrowForward, contentDescription = null) }
                     )
                     NavigationDrawerItem(
-                        label = { Text("📥 Restore Cloud Data") },
+                        label = { Text("Restore Cloud Data") },
                         selected = false,
                         onClick = { onRestore(); scope.launch { drawerState.close() } },
                         icon = { Icon(Icons.Default.Refresh, contentDescription = null) }
@@ -174,9 +174,9 @@ fun MainAppScreen(
                     title = {
                         Text(
                             when (currentView) {
-                                "SEARCH_DATE_COURT" -> "🔍 Search by Date & Court"
-                                "BULK" -> "⚡ Bulk Operations by Date & Court"
-                                "REPORTS_PANEL" -> "📄 Landscape PDF Reports Engine"
+                                "SEARCH_DATE_COURT" -> "Search by Date & Court"
+                                "BULK" -> "Bulk Operations by Date & Court"
+                                "REPORTS_PANEL" -> "PDF Reports Engine"
                                 else -> "Allahabad High Court File Tracker"
                             },
                             fontSize = 16.sp
@@ -199,13 +199,11 @@ fun MainAppScreen(
             Column(modifier = Modifier.padding(padding).padding(12.dp)) {
 
                 if (currentView == "REPORTS_PANEL") {
-                    // ISOLATED REPORT GENERATION PANEL
-                    Text("Select PDF Report Type (Legal Size Landscape):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
+                    Text("Select PDF Report Type:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
 
                     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text("1. Entire Database Report", fontWeight = FontWeight.Bold)
-                            Text("Generates complete ledger with full audit stack traces.", fontSize = 12.sp, color = Color.Gray)
                             Button(
                                 onClick = {
                                     scope.launch {
@@ -226,7 +224,7 @@ fun MainAppScreen(
                             OutlinedTextField(
                                 value = reportTargetFileNo,
                                 onValueChange = { reportTargetFileNo = it },
-                                label = { Text("File Number (e.g. 1234/2026)") },
+                                label = { Text("File Number") },
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Button(
@@ -251,7 +249,7 @@ fun MainAppScreen(
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text("3. Date & Court Number Wise Report", fontWeight = FontWeight.Bold)
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedTextField(value = reportTargetDate, onValueChange = { reportTargetDate = it }, label = { Text("Date (e.g. 4-8-26 / 04-08-2026)") }, modifier = Modifier.weight(1f))
+                                OutlinedTextField(value = reportTargetDate, onValueChange = { reportTargetDate = it }, label = { Text("Date") }, modifier = Modifier.weight(1f))
                                 OutlinedTextField(
                                     value = reportTargetCourtNo,
                                     onValueChange = { reportTargetCourtNo = it },
@@ -278,7 +276,7 @@ fun MainAppScreen(
                     OutlinedTextField(
                         value = searchDateInput,
                         onValueChange = { searchDateInput = it; searchSelectedCourt = null },
-                        label = { Text("Select Date (e.g. 4-8-26 or 04-08-2026)") },
+                        label = { Text("Select Date") },
                         leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
                         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                     )
@@ -286,13 +284,13 @@ fun MainAppScreen(
                     OutlinedTextField(
                         value = globalKeywordSearch,
                         onValueChange = { globalKeywordSearch = it },
-                        label = { Text("Or Keyword Search (File No, Court, Serial No, Status)") },
+                        label = { Text("Search") },
                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
                     )
 
                     if (globalKeywordSearch.isNotBlank()) {
-                        Text("Keyword Results (${globalSearchResults.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
+                        Text("Results (${globalSearchResults.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(globalSearchResults) { record ->
                                 Card(
@@ -322,7 +320,7 @@ fun MainAppScreen(
                             }
                         }
                     } else {
-                        Text("Active Courts for $normalizedSearchDate (${searchCourtsList.size}):", fontWeight = FontWeight.Bold)
+                        Text("Active Courts (${searchCourtsList.size}):", fontWeight = FontWeight.Bold)
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             searchCourtsList.forEach { court ->
                                 FilterChip(
@@ -333,7 +331,7 @@ fun MainAppScreen(
                             }
                         }
 
-                        val targetTitle = if (searchSelectedCourt != null) "Files in Court $searchSelectedCourt on $normalizedSearchDate" else "All Files Dispatched on $normalizedSearchDate"
+                        val targetTitle = if (searchSelectedCourt != null) "Files in Court $searchSelectedCourt" else "All Files Dispatched"
                         Text(targetTitle, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
 
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -366,13 +364,13 @@ fun MainAppScreen(
                     }
 
                 } else if (currentView == "BULK") {
-                    Text("Select Date & Court No to Bulk Update", fontWeight = FontWeight.Bold)
+                    Text("Bulk Operations", fontWeight = FontWeight.Bold)
 
                     Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
                             value = bulkDateInput,
                             onValueChange = { bulkDateInput = it },
-                            label = { Text("Dispatch Date (DD-MM-YY)") },
+                            label = { Text("Dispatch Date") },
                             modifier = Modifier.weight(1f)
                         )
                         OutlinedTextField(
@@ -435,7 +433,7 @@ fun MainAppScreen(
                     // MAIN REGISTRATION SCREEN
                     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), elevation = CardDefaults.cardElevation(4.dp)) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            Text("☀️ Registration / Re-Dispatch", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text("Registration / Re-Dispatch", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
 
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 FilterChip(selected = selectedMode == "Dispatched", onClick = { selectedMode = "Dispatched" }, label = { Text("Dispatched") })
@@ -446,7 +444,7 @@ fun MainAppScreen(
                             OutlinedTextField(
                                 value = dispatchDateInput,
                                 onValueChange = { dispatchDateInput = it },
-                                label = { Text("Dispatch Date (DD-MM-YY) *") },
+                                label = { Text("Dispatch Date") },
                                 trailingIcon = {
                                     TextButton(onClick = { dispatchDateInput = currentDate }) {
                                         Text("Today", fontSize = 11.sp)
@@ -458,7 +456,7 @@ fun MainAppScreen(
                             OutlinedTextField(
                                 value = fileNoInput,
                                 onValueChange = { fileNoInput = it },
-                                label = { Text("File Number (e.g. 1234/2026) *") },
+                                label = { Text("File Number") },
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                             )
 
@@ -467,20 +465,20 @@ fun MainAppScreen(
                                     OutlinedTextField(
                                         value = courtNoInput,
                                         onValueChange = { if (it.isEmpty() || it.toIntOrNull() != null) courtNoInput = it },
-                                        label = { Text("Court No (Integer) *") },
+                                        label = { Text("Court No") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                         modifier = Modifier.weight(1f)
                                     )
                                     OutlinedTextField(
                                         value = serialNoInput,
                                         onValueChange = { if (it.isEmpty() || it.toFloatOrNull() != null) serialNoInput = it },
-                                        label = { Text("Serial No (Decimal) *") },
+                                        label = { Text("Serial No") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
 
-                                Text("List Type *", fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                                Text("List Type", fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     FilterChip(selected = listTypeInput == "DCL", onClick = { listTypeInput = "DCL" }, label = { Text("DCL") })
                                     FilterChip(selected = listTypeInput == "ACL", onClick = { listTypeInput = "ACL" }, label = { Text("ACL") })
@@ -488,13 +486,13 @@ fun MainAppScreen(
                                 }
 
                             } else if (selectedMode == "Chamber") {
-                                OutlinedTextField(value = judgeNameInput, onValueChange = { judgeNameInput = it }, label = { Text("Hon'ble Judge Name *") }, modifier = Modifier.fillMaxWidth())
+                                OutlinedTextField(value = judgeNameInput, onValueChange = { judgeNameInput = it }, label = { Text("Hon'ble Judge Name") }, modifier = Modifier.fillMaxWidth())
                             } else {
                                 Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                                     OutlinedTextField(
                                         value = storageLocationInput,
                                         onValueChange = { storageLocationInput = it },
-                                        label = { Text("Storage Location (Optional)") },
+                                        label = { Text("Storage Location") },
                                         trailingIcon = {
                                             IconButton(onClick = { locationDropdownExpanded = true }) {
                                                 Icon(Icons.Default.ArrowDropDown, contentDescription = "Select Location")
@@ -519,7 +517,7 @@ fun MainAppScreen(
                             OutlinedTextField(
                                 value = remarksInput,
                                 onValueChange = { remarksInput = it },
-                                label = { Text("Remarks / Case Notes (Optional)") },
+                                label = { Text("Remarks") },
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                             )
 
@@ -527,18 +525,18 @@ fun MainAppScreen(
                                 onClick = {
                                     val fileNoRegex = Regex("^\\d+\\/\\d+$")
                                     if (!fileNoRegex.matches(fileNoInput.trim())) {
-                                        Toast.makeText(context, "Invalid File No! Must be format: [Number]/[Year] (e.g. 1234/2026)", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "Invalid File No! Must be format: [Number]/[Year]", Toast.LENGTH_LONG).show()
                                         return@Button
                                     }
 
                                     val cleanDate = normalizeDate(dispatchDateInput)
 
                                     if (cleanDate.isBlank() || fileNoInput.isBlank()) {
-                                        Toast.makeText(context, "Please fill all mandatory fields (*)", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Please fill required fields", Toast.LENGTH_SHORT).show()
                                         return@Button
                                     }
                                     if (selectedMode == "Dispatched" && (courtNoInput.isBlank() || serialNoInput.isBlank())) {
-                                        Toast.makeText(context, "Court No and Serial No are mandatory!", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Court No and Serial No are required", Toast.LENGTH_SHORT).show()
                                         return@Button
                                     }
 
@@ -620,7 +618,7 @@ fun MainAppScreen(
         }
     }
 
-    // DISPOSAL UPDATE MODAL (STRICTLY ISOLATED DATABASE WRITE ONLY)
+    // DISPOSAL UPDATE MODAL
     val currentRecordForUpdate = activeUpdateRecord
     if (currentRecordForUpdate != null) {
         var newStatus by remember { mutableStateOf("Taken Up") }
@@ -649,7 +647,7 @@ fun MainAppScreen(
                         OutlinedTextField(
                             value = deleteReason,
                             onValueChange = { deleteReason = it },
-                            label = { Text("Mandatory Reason for Deletion *") },
+                            label = { Text("Reason for Deletion") },
                             isError = deleteReason.isBlank(),
                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                         )
@@ -657,7 +655,7 @@ fun MainAppScreen(
                         OutlinedTextField(
                             value = locInput,
                             onValueChange = { locInput = it },
-                            label = { Text("Location (Shelf/Bundle/Seat/Chamber)") },
+                            label = { Text("Location") },
                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                         )
                     }
@@ -686,7 +684,6 @@ fun MainAppScreen(
                                 remarks = remarksUpdate,
                                 historyLog = "${currentRecordForUpdate.historyLog}\n$logEntry"
                             )
-                            // Strict DB write with ZERO report calls
                             dao.insertOrUpdateRecord(updated)
                             activeUpdateRecord = null
                             Toast.makeText(context, "Status Updated Successfully!", Toast.LENGTH_SHORT).show()
