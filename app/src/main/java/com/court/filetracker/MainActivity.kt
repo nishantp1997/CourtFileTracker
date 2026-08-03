@@ -116,69 +116,64 @@ fun MainAppScreen(
     val normalizedReportDate = remember(reportTargetDate) { normalizeDate(reportTargetDate) }
     val normalizedSearchFileNo = remember(searchFileNoInput) { normalizeSearchQuery(searchFileNoInput) }
 
-    // MULTI-COURT DISPATCH HELPER: Returns ALL Court Numbers a file was dispatched to on targetDate
-    fun getAllDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<String> {
-        val result = mutableSetOf<String>()
+    // Strictly returns Court No if an EXPLICIT DISPATCH event occurred on targetDate
+    fun getDispatchedCourtForDate(record: FileRecord, targetDate: String): String {
         val logLines = record.historyLog.split("\n")
-        
-        // Find ALL lines logged on targetDate that explicitly contain dispatch events
-        logLines.forEach { line ->
-            if (line.contains("[$targetDate]") && 
-                (line.contains("Registered as 'Dispatched'") || line.contains("Dispatched to Court")) &&
-                line.contains("Court No:")
-            ) {
-                val match = Regex("Court No:\\s*(\\d+)").find(line)
-                if (match != null) {
-                    result.add(stripLeadingZeros(match.groupValues[1]))
-                }
-            }
+        val dispatchLine = logLines.firstOrNull { line ->
+            line.contains("[$targetDate]") && 
+            (line.contains("Registered as 'Dispatched'") || line.contains("Dispatched to Court")) &&
+            line.contains("Court No:")
         }
         
-        // Fallback: If primary dispatch date matches targetDate and courtNo is active
+        if (dispatchLine != null) {
+            val match = Regex("Court No:\\s*(\\d+)").find(dispatchLine)
+            if (match != null) return stripLeadingZeros(match.groupValues[1])
+        }
+        
         if (record.dispatchDate == targetDate && record.courtNo != "N/A" && record.courtNo.isNotBlank()) {
-            result.add(stripLeadingZeros(record.courtNo))
+            return stripLeadingZeros(record.courtNo)
         }
         
-        return result
+        return "N/A"
     }
 
     // Search Engine Data Flows
     val rawDateRecords by dao.getRecordsByDate(normalizedSearchDate).collectAsState(initial = emptyList())
     val searchCourtsList = remember(rawDateRecords, normalizedSearchDate) {
-        rawDateRecords.flatMap { getAllDispatchedCourtsForDate(it, normalizedSearchDate) }
-            .filter { it.isNotBlank() && it != "N/A" }
+        rawDateRecords.map { getDispatchedCourtForDate(it, normalizedSearchDate) }
+            .filter { it != "N/A" && it.isNotBlank() }
             .distinct()
             .sortedBy { it.toIntOrNull() ?: 999 }
     }
     val searchCourtFiles = remember(rawDateRecords, searchSelectedCourt, normalizedSearchDate) {
         if (searchSelectedCourt == null) emptyList()
-        else rawDateRecords.filter { getAllDispatchedCourtsForDate(it, normalizedSearchDate).contains(searchSelectedCourt) }
+        else rawDateRecords.filter { getDispatchedCourtForDate(it, normalizedSearchDate) == searchSelectedCourt }
     }
 
     // Bulk Operations Data Flows
     val rawBulkDateRecords by dao.getRecordsByDate(normalizedBulkDate).collectAsState(initial = emptyList())
     val bulkCourtsList = remember(rawBulkDateRecords, normalizedBulkDate) {
-        rawBulkDateRecords.flatMap { getAllDispatchedCourtsForDate(it, normalizedBulkDate) }
-            .filter { it.isNotBlank() && it != "N/A" }
+        rawBulkDateRecords.map { getDispatchedCourtForDate(it, normalizedBulkDate) }
+            .filter { it != "N/A" && it.isNotBlank() }
             .distinct()
             .sortedBy { it.toIntOrNull() ?: 999 }
     }
     val bulkCourtFiles = remember(rawBulkDateRecords, bulkSelectedCourtChip, normalizedBulkDate) {
         if (bulkSelectedCourtChip == null) emptyList()
-        else rawBulkDateRecords.filter { getAllDispatchedCourtsForDate(it, normalizedBulkDate).contains(bulkSelectedCourtChip) }
+        else rawBulkDateRecords.filter { getDispatchedCourtForDate(it, normalizedBulkDate) == bulkSelectedCourtChip }
     }
 
     // PDF Reports Panel Data Flows
     val rawReportDateRecords by dao.getRecordsByDate(normalizedReportDate).collectAsState(initial = emptyList())
     val reportCourtsList = remember(rawReportDateRecords, normalizedReportDate) {
-        rawReportDateRecords.flatMap { getAllDispatchedCourtsForDate(it, normalizedReportDate) }
-            .filter { it.isNotBlank() && it != "N/A" }
+        rawReportDateRecords.map { getDispatchedCourtForDate(it, normalizedReportDate) }
+            .filter { it != "N/A" && it.isNotBlank() }
             .distinct()
             .sortedBy { it.toIntOrNull() ?: 999 }
     }
     val reportCourtFiles = remember(rawReportDateRecords, reportSelectedCourtChip, normalizedReportDate) {
         if (reportSelectedCourtChip == null) emptyList()
-        else rawReportDateRecords.filter { getAllDispatchedCourtsForDate(it, normalizedReportDate).contains(reportSelectedCourtChip) }
+        else rawReportDateRecords.filter { getDispatchedCourtForDate(it, normalizedReportDate) == reportSelectedCourtChip }
     }
 
     // Other Search Flows
@@ -468,6 +463,7 @@ fun MainAppScreen(
                                 Text("Files Dispatched to Court $searchSelectedCourt on $normalizedSearchDate (${searchCourtFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
                                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     items(searchCourtFiles) { record ->
+                                        val courtForThisDate = getDispatchedCourtForDate(record, normalizedSearchDate)
                                         Card(
                                             modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
                                             colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
@@ -479,8 +475,8 @@ fun MainAppScreen(
                                                         Text(record.status, color = Color.White)
                                                     }
                                                 }
-                                                Text("Dispatched on $normalizedSearchDate to Court $searchSelectedCourt", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                                Text("Current Status: ${record.status} | Active Court: ${record.courtNo} | Location: ${record.storageLocation.ifEmpty { "N/A" }}", fontSize = 12.sp)
+                                                Text("Dispatched Court on $normalizedSearchDate: Court $courtForThisDate", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                                Text("Current Status: ${record.status} | Location: ${record.storageLocation.ifEmpty { "N/A" }}", fontSize = 12.sp)
                                                 if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
 
                                                 Button(
@@ -976,9 +972,10 @@ fun MainAppScreen(
         }
     }
 
-    // SET BULK LOCATION DIALOG
+    // SET BULK LOCATION DIALOG WITH DYNAMIC CHANGE AFFECTED DATE
     if (showSetLocationDialog) {
         var inputLocText by remember { mutableStateOf("") }
+        var changeAffectedDate by remember { mutableStateOf(currentDate) }
         var dropdownExpanded by remember { mutableStateOf(false) }
         val receivedOptions = listOf("Listing Seat", "Disposal/Compliance Seat", "Shelf")
 
@@ -1022,6 +1019,15 @@ fun MainAppScreen(
                                 }
                             }
                         }
+
+                        // Prompts for Change Affected Date on Received Files
+                        OutlinedTextField(
+                            value = changeAffectedDate,
+                            onValueChange = { changeAffectedDate = it },
+                            label = { Text("Change Affected Date *") },
+                            leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        )
                     } else {
                         OutlinedTextField(
                             value = inputLocText,
@@ -1034,12 +1040,14 @@ fun MainAppScreen(
             },
             confirmButton = {
                 Button(
-                    enabled = inputLocText.isNotBlank(),
+                    enabled = inputLocText.isNotBlank() && (bulkLocationCategory != "RECEIVED" || changeAffectedDate.isNotBlank()),
                     onClick = {
                         scope.launch {
+                            val cleanDate = normalizeDate(changeAffectedDate)
                             val selectedTargets = bulkLocationFilteredFiles.filter { bulkLocSelectedIds.contains(it.id) }
                             val updated = selectedTargets.map { rec ->
-                                val logEntry = "[$currentDate] Bulk Location updated to '$inputLocText'"
+                                val dateTag = if (bulkLocationCategory == "RECEIVED") cleanDate else currentDate
+                                val logEntry = "[$dateTag] Bulk Location updated to '$inputLocText'"
                                 rec.copy(
                                     storageLocation = inputLocText.trim(),
                                     historyLog = "${rec.historyLog}\n$logEntry"
@@ -1063,11 +1071,12 @@ fun MainAppScreen(
         )
     }
 
-    // DISPOSAL UPDATE MODAL (WITH SOFT DELETION FIELD WIPING & AUDIT LOGGING)
+    // DISPOSAL UPDATE MODAL WITH CHANGE AFFECTED DATE PROMPT
     val currentRecordForUpdate = activeUpdateRecord
     if (currentRecordForUpdate != null) {
-        var newStatus by remember { mutableStateOf("Taken Up") }
-        var locInput by remember { mutableStateOf("") }
+        var newStatus by remember { mutableStateOf(currentRecordForUpdate.status.ifEmpty { "Taken Up" }) }
+        var locInput by remember { mutableStateOf(currentRecordForUpdate.storageLocation) }
+        var changeAffectedDate by remember { mutableStateOf(currentDate) }
         var remarksUpdate by remember { mutableStateOf(currentRecordForUpdate.remarks) }
         var deleteReason by remember { mutableStateOf("") }
         var validationError by remember { mutableStateOf<String?>(null) }
@@ -1077,6 +1086,11 @@ fun MainAppScreen(
 
         val isDeleteMode = newStatus == "Entry Deleted"
         val isReceivedMode = newStatus == "Received from Court"
+        
+        // RULE TRIGGER: Status transitioning to "Received from Court" OR modifying location on an existing "Received from Court" file
+        val requiresChangeAffectedDate = isReceivedMode || 
+            (currentRecordForUpdate.status == "Received from Court" && locInput != currentRecordForUpdate.storageLocation)
+
         val isCourtStatus = newStatus == "Pass Over" || newStatus == "Taken Up" || isReceivedMode
 
         val isCourtInfoMissing = currentRecordForUpdate.courtNo.isBlank() || 
@@ -1151,7 +1165,7 @@ fun MainAppScreen(
                         OutlinedTextField(
                             value = deleteReason,
                             onValueChange = { deleteReason = it },
-                            label = { Text("Reason for Deletion *") },
+                            label = { Text("Reason for Deletion") },
                             isError = deleteReason.isBlank(),
                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                         )
@@ -1160,6 +1174,17 @@ fun MainAppScreen(
                             value = locInput,
                             onValueChange = { locInput = it },
                             label = { Text("Location") },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        )
+                    }
+
+                    // Prompt for Change Affected Date whenever Received status is selected or modified
+                    if (requiresChangeAffectedDate) {
+                        OutlinedTextField(
+                            value = changeAffectedDate,
+                            onValueChange = { changeAffectedDate = it },
+                            label = { Text("Change Affected Date *") },
+                            leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                         )
                     }
@@ -1197,29 +1222,30 @@ fun MainAppScreen(
                             return@Button
                         }
 
+                        val effectiveDate = if (requiresChangeAffectedDate) normalizeDate(changeAffectedDate) else normalizeDate(dispatchDateInput)
+
+                        if (requiresChangeAffectedDate && effectiveDate.isBlank()) {
+                            validationError = "Change Affected Date is required!"
+                            return@Button
+                        }
+
                         scope.launch {
-                            val logEntry = if (isDeleteMode) {
-                                "[$dispatchDateInput] Status changed to 'Entry Deleted' | Deleted Prev Court: ${currentRecordForUpdate.courtNo} | Deleted Prev Serial: ${currentRecordForUpdate.serialNo.ifEmpty { "N/A" }} | Reason: ${deleteReason.trim()}"
-                            } else {
-                                "[$dispatchDateInput] Status changed to '$newStatus' ${if (locInput.isNotBlank()) "Loc: $locInput" else ""}"
-                            }
+                            val logEntry = "[$effectiveDate] Status changed to '$newStatus' ${if (isDeleteMode) "Reason: $deleteReason" else "Loc: $locInput"}"
 
                             val updated = currentRecordForUpdate.copy(
                                 status = newStatus,
-                                courtNo = if (isDeleteMode) "N/A" else currentRecordForUpdate.courtNo,
-                                serialNo = if (isDeleteMode) "" else currentRecordForUpdate.serialNo,
                                 storageLocation = if (isDeleteMode) "DELETED" else locInput,
-                                sentToChamber = if (isDeleteMode) false else currentRecordForUpdate.sentToChamber,
-                                judgeName = if (isDeleteMode) "" else currentRecordForUpdate.judgeName,
-                                remarks = remarksUpdate.trim(),
+                                sentToChamber = false,
+                                judgeName = "",
+                                remarks = remarksUpdate,
                                 historyLog = "${currentRecordForUpdate.historyLog}\n$logEntry"
                             )
                             dao.insertOrUpdateRecord(updated)
                             activeUpdateRecord = null
-                            Toast.makeText(context, if (isDeleteMode) "Entry Soft Deleted!" else "Status Updated Successfully!", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Status Updated Successfully!", Toast.LENGTH_SHORT).show()
                         }
                     }
-                ) { Text(if (isDeleteMode) "Confirm Deletion" else "Save Changes") }
+                ) { Text("Save Changes") }
             }
         )
     }
