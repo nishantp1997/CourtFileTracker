@@ -100,6 +100,7 @@ fun MainAppScreen(
     var bulkSelectedCourtChip by remember { mutableStateOf<String?>(null) }
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
     var selectedFileIds by remember { mutableStateOf(setOf<Long>()) }
+    var showBulkReceivedDateDialog by remember { mutableStateOf(false) }
 
     // Bulk Location Screen States
     var bulkLocationCategory by remember { mutableStateOf("PASS_OVER") }
@@ -736,19 +737,23 @@ fun MainAppScreen(
                         Button(
                             enabled = selectedFileIds.isNotEmpty(),
                             onClick = {
-                                scope.launch {
-                                    val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
+                                if (bulkTargetStatus == "Received from Court") {
+                                    showBulkReceivedDateDialog = true
+                                } else {
+                                    scope.launch {
+                                        val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
 
-                                    val updatedList = selectedRecords.map { rec ->
-                                        rec.copy(
-                                            status = bulkTargetStatus,
-                                            storageLocation = "",
-                                            historyLog = "${rec.historyLog}\n[$normalizedBulkDate] Bulk Status changed to '$bulkTargetStatus'"
-                                        )
+                                        val updatedList = selectedRecords.map { rec ->
+                                            rec.copy(
+                                                status = bulkTargetStatus,
+                                                storageLocation = "",
+                                                historyLog = "${rec.historyLog}\n[$normalizedBulkDate] Bulk Status changed to '$bulkTargetStatus'"
+                                            )
+                                        }
+                                        dao.insertOrUpdateAll(updatedList)
+                                        selectedFileIds = emptySet()
+                                        Toast.makeText(context, "${updatedList.size} Files Updated!", Toast.LENGTH_SHORT).show()
                                     }
-                                    dao.insertOrUpdateAll(updatedList)
-                                    selectedFileIds = emptySet()
-                                    Toast.makeText(context, "${updatedList.size} Files Updated!", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
@@ -972,6 +977,58 @@ fun MainAppScreen(
         }
     }
 
+    // NEW: BULK OPERATIONS RECEIVED FROM COURT DATE PROMPT DIALOG
+    if (showBulkReceivedDateDialog) {
+        var bulkChangeAffectedDate by remember { mutableStateOf(bulkDateInput) }
+
+        AlertDialog(
+            onDismissRequest = { showBulkReceivedDateDialog = false },
+            title = { Text("Bulk Operation: Received from Court") },
+            text = {
+                Column {
+                    Text("Specify the Change Affected Date for updating ${selectedFileIds.size} files to 'Received from Court':")
+                    OutlinedTextField(
+                        value = bulkChangeAffectedDate,
+                        onValueChange = { bulkChangeAffectedDate = it },
+                        label = { Text("Change Affected Date *") },
+                        leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = bulkChangeAffectedDate.isNotBlank(),
+                    onClick = {
+                        scope.launch {
+                            val cleanDate = normalizeDate(bulkChangeAffectedDate)
+                            val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
+
+                            val updatedList = selectedRecords.map { rec ->
+                                rec.copy(
+                                    status = "Received from Court",
+                                    storageLocation = "",
+                                    historyLog = "${rec.historyLog}\n[$cleanDate] Bulk Status changed to 'Received from Court'"
+                                )
+                            }
+                            dao.insertOrUpdateAll(updatedList)
+                            selectedFileIds = emptySet()
+                            showBulkReceivedDateDialog = false
+                            Toast.makeText(context, "${updatedList.size} Files Marked Received on $cleanDate!", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) {
+                    Text("Confirm Bulk Status Update")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBulkReceivedDateDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     // SET BULK LOCATION DIALOG WITH DYNAMIC CHANGE AFFECTED DATE
     if (showSetLocationDialog) {
         var inputLocText by remember { mutableStateOf("") }
@@ -1020,7 +1077,6 @@ fun MainAppScreen(
                             }
                         }
 
-                        // Prompts for Change Affected Date on Received Files
                         OutlinedTextField(
                             value = changeAffectedDate,
                             onValueChange = { changeAffectedDate = it },
@@ -1087,7 +1143,6 @@ fun MainAppScreen(
         val isDeleteMode = newStatus == "Entry Deleted"
         val isReceivedMode = newStatus == "Received from Court"
         
-        // RULE TRIGGER: Status transitioning to "Received from Court" OR modifying location on an existing "Received from Court" file
         val requiresChangeAffectedDate = isReceivedMode || 
             (currentRecordForUpdate.status == "Received from Court" && locInput != currentRecordForUpdate.storageLocation)
 
@@ -1178,7 +1233,6 @@ fun MainAppScreen(
                         )
                     }
 
-                    // Prompt for Change Affected Date whenever Received status is selected or modified
                     if (requiresChangeAffectedDate) {
                         OutlinedTextField(
                             value = changeAffectedDate,
