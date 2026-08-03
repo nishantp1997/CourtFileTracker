@@ -29,6 +29,21 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/LICENSE"
+            excludes += "META-INF/LICENSE.txt"
+            excludes += "META-INF/license.txt"
+            excludes += "META-INF/NOTICE"
+            excludes += "META-INF/NOTICE.txt"
+            excludes += "META-INF/notice.txt"
+            excludes += "META-INF/ASL2.0"
+            excludes += "META-INF/INDEX.LIST"
+        }
+    }
 }
 
 dependencies {
@@ -58,5 +73,25 @@ dependencies {
     
     // HTTP transport engine needed for Drive API on Android
     implementation("com.google.http-client:google-http-client-android:1.43.3")
+
+// Google Play Services Auth
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
+
+    // Google Drive API Client Libraries
+    implementation("com.google.api-client:google-api-client:2.2.0") {
+        exclude(group = "org.apache.httpcomponents")
+        exclude(group = "com.google.guava", module = "guava-jdk5")
+    }
+    implementation("com.google.api-client:google-api-client-android:2.2.0") {
+        exclude(group = "org.apache.httpcomponents")
+    }
+    implementation("com.google.apis:google-api-services-drive:v3-rev20230822-2.0.0") {
+        exclude(group = "org.apache.httpcomponents")
+    }
+    implementation("com.google.http-client:google-http-client-gson:1.43.3")
+
+    // Guava Fix for Android
+    implementation("com.google.guava:guava:32.1.3-android")
+
 
 }
