@@ -2,7 +2,6 @@ package com.court.filetracker
 
 import android.app.Activity
 import android.content.Context
-import android.content.Intent
 import android.widget.Toast
 import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
@@ -13,11 +12,11 @@ import com.google.api.client.http.FileContent
 import com.google.api.client.json.gson.GsonFactory
 import com.google.api.services.drive.Drive
 import com.google.api.services.drive.DriveScopes
+import com.google.api.services.drive.model.File as DriveFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.text.SimpleDateFormat
@@ -72,7 +71,7 @@ object DriveServiceHelper {
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Ensure room database checkpoints/flushesWAL mode changes
+                // Checkpoint database to flush WAL memory into main .db file
                 val db = AppDatabase.getDatabase(context)
                 db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)").close()
 
@@ -84,23 +83,21 @@ object DriveServiceHelper {
                     return@launch
                 }
 
-                // Check if a backup file already exists on Drive
+                // Query Drive for existing backup file
                 val queryResults = driveService.files().list()
                     .setQ("name = '$BACKUP_FILE_NAME' and trashed = false")
                     .setSpaces("drive")
                     .execute()
 
-                val fileMetadata = com.google.api.services.drive.model.File().apply {
+                val fileMetadata = DriveFile().apply {
                     name = BACKUP_FILE_NAME
                 }
                 val mediaContent = FileContent("application/x-sqlite3", dbFile)
 
                 val existingFiles = queryResults.files
                 if (existingFiles.isNullOrEmpty()) {
-                    // Create new backup file
                     driveService.files().create(fileMetadata, mediaContent).execute()
                 } else {
-                    // Update existing backup file
                     val existingFileId = existingFiles[0].id
                     driveService.files().update(existingFileId, null, mediaContent).execute()
                 }
@@ -153,17 +150,17 @@ object DriveServiceHelper {
                 val walFile = context.getDatabasePath("court_file_tracker_db-wal")
                 val shmFile = context.getDatabasePath("court_file_tracker_db-shm")
 
-                // Remove temp WAL files to prevent room cached state conflicts
+                // Clear WAL cache files
                 if (walFile.exists()) walFile.delete()
                 if (shmFile.exists()) shmFile.delete()
 
-                // Overwrite the local SQLite database file
+                // Overwrite local database
                 FileOutputStream(dbFile).use { output ->
                     inputStream.copyTo(output)
                 }
 
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Cloud Data Restored Successfully! Restarting app UI...", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Cloud Data Restored Successfully!", Toast.LENGTH_LONG).show()
                     onRestoreComplete.run()
                 }
             } catch (e: Exception) {
