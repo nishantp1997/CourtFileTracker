@@ -50,4 +50,13 @@ dependencies {
 
     // Google Identity Services (Drive Login)
     implementation("com.google.android.gms:play-services-auth:20.7.0")
+
+// Google Drive & Authentication SDKs
+    implementation("com.google.android.gms:play-services-auth:21.0.0")
+    implementation("com.google.api-client:google-api-client-android:2.2.0")
+    implementation("com.google.apis:google-api-services-drive:v3-rev20230822-2.0.0")
+    
+    // HTTP transport engine needed for Drive API on Android
+    implementation("com.google.http-client:google-http-client-android:1.43.3")
+
 }
