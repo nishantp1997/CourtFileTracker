@@ -53,6 +53,7 @@ object PdfImportHelper {
                     return@launch
                 }
 
+                // Batch insert/update into Room database
                 dao.insertOrUpdateAll(extractedRecords)
 
                 withContext(Dispatchers.Main) {
@@ -85,7 +86,8 @@ object PdfImportHelper {
         var currentRemarks = ""
         val historyLines = mutableListOf<String>()
 
-        val caseNoRegex = Regex("^(\\d{1,6}/\\d{4})")
+        // Updated regex to catch file numbers regardless of leading whitespace/table characters
+        val caseNoRegex = Regex("(\\d{1,6}/\\d{4})")
         val dateRegex = Regex("(\\d{2}-\\d{2}-\\d{2})")
 
         fun commitCurrentRecord() {
@@ -99,11 +101,13 @@ object PdfImportHelper {
                 val latestDate = datesInHistory.lastOrNull() ?: "01-01-26"
                 val datesCsv = datesInHistory.joinToString(", ")
 
+                // Extract court no if present in history log
                 val courtMatch = Regex("Court No:\\s*(\\d+)").find(fullHistory)
                 if (courtMatch != null) {
                     currentCourtNo = courtMatch.groupValues[1]
                 }
 
+                // Extract serial no if present in history log
                 val serialMatch = Regex("Serial:\\s*([A-Za-z0-9\\s\\-\\.]+?)(?=\\||\$)").find(fullHistory)
                 if (serialMatch != null) {
                     currentSerialNo = serialMatch.groupValues[1].trim()
@@ -128,26 +132,33 @@ object PdfImportHelper {
         }
 
         for (line in lines) {
-            val cleanLine = line.replace("|", "").trim()
-            if (cleanLine.isBlank() || cleanLine.contains("ALLAHABAD HIGH COURT") || cleanLine.contains("Report Type:")) {
+            val cleanLine = line.trim()
+            if (cleanLine.isBlank() || cleanLine.contains("ALLAHABAD HIGH COURT") || cleanLine.contains("Report Type:") || cleanLine.startsWith("File No.")) {
                 continue
             }
 
+            // Check if line contains a Case File Number (e.g. 10064/2026)
             val caseMatch = caseNoRegex.find(cleanLine)
-            if (caseMatch != null) {
-                commitCurrentRecord()
+            
+            // Check if this line is just a case number or starts a new entry block
+            if (caseMatch != null && (cleanLine.startsWith(caseMatch.value) || cleanLine.contains("|") || cleanLine.matches(Regex("^\\d{1,6}/\\d{4}\$")))) {
+                // If we hit a new file entry, commit the previous accumulated record first
+                if (currentFileNo.isBlank() || caseMatch.value != currentFileNo) {
+                    commitCurrentRecord()
 
-                currentFileNo = caseMatch.groupValues[1]
-                currentStatus = "Dispatched"
-                currentCourtNo = "N/A"
-                currentSerialNo = ""
-                currentLocation = ""
-                currentJudge = ""
-                currentRemarks = ""
-                historyLines.clear()
-                continue
+                    // Reset state variables for the newly found case
+                    currentFileNo = caseMatch.value
+                    currentStatus = "Dispatched"
+                    currentCourtNo = "N/A"
+                    currentSerialNo = ""
+                    currentLocation = ""
+                    currentJudge = ""
+                    currentRemarks = ""
+                    historyLines.clear()
+                }
             }
 
+            // Parse status and location info
             if (cleanLine.contains("Taken Up") || cleanLine.contains("Pass Over") || cleanLine.contains("Not Sent to Court") || cleanLine.contains("Received from Court") || cleanLine.contains("DELETED")) {
                 if (cleanLine.contains("Taken Up")) currentStatus = "Taken Up"
                 else if (cleanLine.contains("Pass Over")) currentStatus = "Pass Over"
@@ -161,13 +172,19 @@ object PdfImportHelper {
                 }
             }
 
+            // Capture history log entries containing date tags
             if (dateRegex.containsMatchIn(cleanLine)) {
-                var formattedLine = cleanLine
-                if (!formattedLine.startsWith("[")) formattedLine = "[$formattedLine"
-                historyLines.add(formattedLine)
+                var formattedLine = cleanLine.replace("|", "").trim()
+                if (!formattedLine.startsWith("[") && formattedLine.contains("]")) {
+                    formattedLine = "[$formattedLine"
+                }
+                if (formattedLine.isNotBlank() && !formattedLine.contains("Report Type")) {
+                    historyLines.add(formattedLine)
+                }
             }
         }
 
+        // Commit final record at end of file
         commitCurrentRecord()
         return records
     }
