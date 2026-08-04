@@ -93,5 +93,9 @@ dependencies {
     // Guava Fix for Android
     implementation("com.google.guava:guava:32.1.3-android")
 
+// iText 7 Core PDF Engine for Reading/Parsing Master Ledger PDFs
+    implementation("com.itextpdf:itext7-core:7.2.5")
+
+
 
 }
