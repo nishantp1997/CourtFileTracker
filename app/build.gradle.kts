@@ -98,5 +98,4 @@ dependencies {
 
 // Google Gson (Fast WhatsApp JSON Backup/Restore)
     implementation("com.google.code.gson:gson:2.10.1")
-
 }
