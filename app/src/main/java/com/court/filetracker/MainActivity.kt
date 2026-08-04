@@ -100,7 +100,7 @@ fun MainAppScreen(
     var bulkSelectedCourtChip by remember { mutableStateOf<String?>(null) }
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
     var selectedFileIds by remember { mutableStateOf(setOf<Long>()) }
-    var showBulkReceivedDateDialog by remember { mutableStateOf(false) }
+    var showBulkReceivedDialog by remember { mutableStateOf(false) }
 
     // Bulk Location Screen States
     var bulkLocationCategory by remember { mutableStateOf("PASS_OVER") }
@@ -738,7 +738,7 @@ fun MainAppScreen(
                             enabled = selectedFileIds.isNotEmpty(),
                             onClick = {
                                 if (bulkTargetStatus == "Received from Court") {
-                                    showBulkReceivedDateDialog = true
+                                    showBulkReceivedDialog = true
                                 } else {
                                     scope.launch {
                                         val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
@@ -977,16 +977,51 @@ fun MainAppScreen(
         }
     }
 
-    // NEW: BULK OPERATIONS RECEIVED FROM COURT DATE PROMPT DIALOG
-    if (showBulkReceivedDateDialog) {
+    // BULK OPERATIONS "RECEIVED FROM COURT" DIALOG WITH LOCATION SELECTION & CHANGE AFFECTED DATE
+    if (showBulkReceivedDialog) {
+        var selectedLocation by remember { mutableStateOf("Listing Seat") }
+        var dropdownExpanded by remember { mutableStateOf(false) }
         var bulkChangeAffectedDate by remember { mutableStateOf(bulkDateInput) }
+        val receivedOptions = listOf("Listing Seat", "Disposal/Compliance Seat", "Shelf")
 
         AlertDialog(
-            onDismissRequest = { showBulkReceivedDateDialog = false },
+            onDismissRequest = { showBulkReceivedDialog = false },
             title = { Text("Bulk Operation: Received from Court") },
             text = {
                 Column {
-                    Text("Specify the Change Affected Date for updating ${selectedFileIds.size} files to 'Received from Court':")
+                    Text("Specify details for updating ${selectedFileIds.size} files to 'Received from Court':")
+
+                    // Target Storage Location Dropdown
+                    Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        OutlinedTextField(
+                            value = selectedLocation,
+                            onValueChange = { selectedLocation = it },
+                            label = { Text("Select Target Location *") },
+                            readOnly = true,
+                            trailingIcon = {
+                                IconButton(onClick = { dropdownExpanded = true }) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Dropdown")
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        DropdownMenu(
+                            expanded = dropdownExpanded,
+                            onDismissRequest = { dropdownExpanded = false }
+                        ) {
+                            receivedOptions.forEach { opt ->
+                                DropdownMenuItem(
+                                    text = { Text(opt) },
+                                    onClick = {
+                                        selectedLocation = opt
+                                        dropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Change Affected Date Input
                     OutlinedTextField(
                         value = bulkChangeAffectedDate,
                         onValueChange = { bulkChangeAffectedDate = it },
@@ -998,7 +1033,7 @@ fun MainAppScreen(
             },
             confirmButton = {
                 Button(
-                    enabled = bulkChangeAffectedDate.isNotBlank(),
+                    enabled = selectedLocation.isNotBlank() && bulkChangeAffectedDate.isNotBlank(),
                     onClick = {
                         scope.launch {
                             val cleanDate = normalizeDate(bulkChangeAffectedDate)
@@ -1007,14 +1042,14 @@ fun MainAppScreen(
                             val updatedList = selectedRecords.map { rec ->
                                 rec.copy(
                                     status = "Received from Court",
-                                    storageLocation = "",
-                                    historyLog = "${rec.historyLog}\n[$cleanDate] Bulk Status changed to 'Received from Court'"
+                                    storageLocation = selectedLocation,
+                                    historyLog = "${rec.historyLog}\n[$cleanDate] Bulk Status changed to 'Received from Court' | Loc: $selectedLocation"
                                 )
                             }
                             dao.insertOrUpdateAll(updatedList)
                             selectedFileIds = emptySet()
-                            showBulkReceivedDateDialog = false
-                            Toast.makeText(context, "${updatedList.size} Files Marked Received on $cleanDate!", Toast.LENGTH_SHORT).show()
+                            showBulkReceivedDialog = false
+                            Toast.makeText(context, "${updatedList.size} Files Marked Received ($selectedLocation) on $cleanDate!", Toast.LENGTH_SHORT).show()
                         }
                     }
                 ) {
@@ -1022,7 +1057,7 @@ fun MainAppScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showBulkReceivedDateDialog = false }) {
+                TextButton(onClick = { showBulkReceivedDialog = false }) {
                     Text("Cancel")
                 }
             }
