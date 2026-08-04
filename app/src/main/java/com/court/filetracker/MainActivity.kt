@@ -53,9 +53,6 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 MainAppScreen(
                     dao = dao,
-                    onGoogleDriveLogin = { DriveServiceHelper.requestDriveSignIn(this) },
-                    onBackup = { DriveServiceHelper.performBackup(this) },
-                    onRestore = { DriveServiceHelper.performRestore(this, Runnable {}) },
                     onPickPdf = { callback ->
                         onPdfSelected = callback
                         pdfPickerLauncher.launch("application/pdf")
@@ -68,22 +65,12 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == DriveServiceHelper.RC_SIGN_IN) {
-            Toast.makeText(this, "Google Drive Account Authenticated!", Toast.LENGTH_SHORT).show()
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainAppScreen(
     dao: FileRecordDao,
-    onGoogleDriveLogin: () -> Unit,
-    onBackup: () -> Unit,
-    onRestore: () -> Unit,
     onPickPdf: ((Uri) -> Unit) -> Unit,
     onPickJson: ((Uri) -> Unit) -> Unit
 ) {
@@ -328,7 +315,6 @@ fun MainAppScreen(
                     )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                     
-                    // WHATSAPP BACKUP & RESTORE ACTIONS
                     NavigationDrawerItem(
                         label = { Text("Send Backup to WhatsApp") },
                         selected = false,
@@ -363,27 +349,6 @@ fun MainAppScreen(
                                 PdfImportHelper.restoreDatabaseFromPdf(context, uri, dao) {}
                             }
                         },
-                        icon = { Icon(Icons.Default.Refresh, contentDescription = null) }
-                    )
-                    
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                    NavigationDrawerItem(
-                        label = { Text("Connect Google Drive") },
-                        selected = false,
-                        onClick = { onGoogleDriveLogin(); scope.launch { drawerState.close() } },
-                        icon = { Icon(Icons.Default.AccountCircle, contentDescription = null) }
-                    )
-                    NavigationDrawerItem(
-                        label = { Text("Google Drive Backup") },
-                        selected = false,
-                        onClick = { onBackup(); scope.launch { drawerState.close() } },
-                        icon = { Icon(Icons.Default.ArrowForward, contentDescription = null) }
-                    )
-                    NavigationDrawerItem(
-                        label = { Text("Restore Cloud Data") },
-                        selected = false,
-                        onClick = { onRestore(); scope.launch { drawerState.close() } },
                         icon = { Icon(Icons.Default.Refresh, contentDescription = null) }
                     )
                 }
