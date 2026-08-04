@@ -1,10 +1,12 @@
 package com.court.filetracker
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +33,12 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
+    private var onPdfSelected: ((Uri) -> Unit)? = null
+
+    private val pdfPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri?.let { onPdfSelected?.invoke(it) }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val db = AppDatabase.getDatabase(this)
@@ -42,7 +50,11 @@ class MainActivity : ComponentActivity() {
                     dao = dao,
                     onGoogleDriveLogin = { DriveServiceHelper.requestDriveSignIn(this) },
                     onBackup = { DriveServiceHelper.performBackup(this) },
-                    onRestore = { DriveServiceHelper.performRestore(this, Runnable {}) }
+                    onRestore = { DriveServiceHelper.performRestore(this, Runnable {}) },
+                    onPickPdf = { callback ->
+                        onPdfSelected = callback
+                        pdfPickerLauncher.launch("application/pdf")
+                    }
                 )
             }
         }
@@ -62,7 +74,8 @@ fun MainAppScreen(
     dao: FileRecordDao,
     onGoogleDriveLogin: () -> Unit,
     onBackup: () -> Unit,
-    onRestore: () -> Unit
+    onRestore: () -> Unit,
+    onPickPdf: ((Uri) -> Unit) -> Unit
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -91,12 +104,12 @@ fun MainAppScreen(
     var searchFileNoInput by remember { mutableStateOf("") }
 
     // Option 5: Multi-Criteria Advanced Search States
-    var searchCategory by remember { mutableStateOf("LOCATION") } // LOCATION, JUDGE, REMARKS, STATUS
-    var searchLocOption by remember { mutableStateOf("Listing Seat") } // Listing Seat, Disposal/Compliance Seat, Shelf, Other
+    var searchCategory by remember { mutableStateOf("LOCATION") }
+    var searchLocOption by remember { mutableStateOf("Listing Seat") }
     var searchCustomLocText by remember { mutableStateOf("") }
     var searchJudgeTextInput by remember { mutableStateOf("") }
     var searchRemarksTextInput by remember { mutableStateOf("") }
-    var searchStatusOption by remember { mutableStateOf("Dispatched") } // 6 standard statuses
+    var searchStatusOption by remember { mutableStateOf("Dispatched") }
     var searchDateInterlocator by remember { mutableStateOf("") }
 
     // Report Generator Input States
@@ -127,7 +140,6 @@ fun MainAppScreen(
     val normalizedSearchFileNo = remember(searchFileNoInput) { normalizeSearchQuery(searchFileNoInput) }
     val normalizedInterlocatorDate = remember(searchDateInterlocator) { if (searchDateInterlocator.isBlank()) "" else normalizeDate(searchDateInterlocator) }
 
-    // Strictly returns Court No if an EXPLICIT DISPATCH event occurred on targetDate
     fun getDispatchedCourtForDate(record: FileRecord, targetDate: String): String {
         val logLines = record.historyLog.split("\n")
         val dispatchLine = logLines.firstOrNull { line ->
@@ -193,13 +205,11 @@ fun MainAppScreen(
     val chamberFiles = remember(allDbRecords) { allDbRecords.filter { it.sentToChamber || it.status.contains("Chamber", ignoreCase = true) } }
     val takenUpFiles = remember(allDbRecords) { allDbRecords.filter { it.status == "Taken Up" } }
 
-    // Multi-Criteria Advanced Search Results Flow (Option 5)
     val advancedSearchResults = remember(
         allDbRecords, searchCategory, searchLocOption, searchCustomLocText, 
         searchJudgeTextInput, searchRemarksTextInput, searchStatusOption, normalizedInterlocatorDate
     ) {
         allDbRecords.filter { rec ->
-            // Phase 1: Filter by category value
             val matchesCategory = when (searchCategory) {
                 "LOCATION" -> {
                     val targetLoc = if (searchLocOption == "Other") searchCustomLocText.trim() else searchLocOption
@@ -222,7 +232,6 @@ fun MainAppScreen(
 
             if (!matchesCategory) return@filter false
 
-            // Phase 2: Interlocator Date Filtering (If date is specified)
             if (normalizedInterlocatorDate.isNotBlank()) {
                 val targetDateTag = "[$normalizedInterlocatorDate]"
                 val hasLogEntryOnDate = rec.historyLog.split("\n").any { line ->
@@ -238,17 +247,13 @@ fun MainAppScreen(
                         else -> false
                     }
                 }
-                
-                // Primary record fallback if dispatch date matches
-                val matchesPrimaryDate = rec.dispatchDate == normalizedInterlocatorDate
-                hasLogEntryOnDate || matchesPrimaryDate
+                hasLogEntryOnDate || (rec.dispatchDate == normalizedInterlocatorDate)
             } else {
                 true
             }
         }
     }
 
-    // Bulk Location Data Filter Rules
     val bulkLocationFilteredFiles = remember(allDbRecords, bulkLocationCategory) {
         allDbRecords.filter { rec ->
             val isLocEmpty = rec.storageLocation.isBlank() || rec.storageLocation.trim().equals("N/A", ignoreCase = true)
@@ -312,6 +317,19 @@ fun MainAppScreen(
                         icon = { Icon(Icons.Default.Share, contentDescription = null) }
                     )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                    
+                    NavigationDrawerItem(
+                        label = { Text("Rebuild DB from PDF") },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onPickPdf { uri ->
+                                PdfImportHelper.restoreDatabaseFromPdf(context, uri, dao) {}
+                            }
+                        },
+                        icon = { Icon(Icons.Default.Refresh, contentDescription = null) }
+                    )
+                    
                     NavigationDrawerItem(
                         label = { Text("Connect Google Drive") },
                         selected = false,
@@ -369,115 +387,9 @@ fun MainAppScreen(
         ) { padding ->
             Column(modifier = Modifier.padding(padding).padding(12.dp)) {
 
-                if (currentView == "BULK_LOCATION") {
-                    Text("Select Unassigned Category:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
-
-                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        FilterChip(
-                            selected = bulkLocationCategory == "PASS_OVER",
-                            onClick = { bulkLocationCategory = "PASS_OVER"; bulkLocSelectedIds = emptySet() },
-                            label = { Text("1. Pass Over Files", fontSize = 11.sp) }
-                        )
-                        FilterChip(
-                            selected = bulkLocationCategory == "NOT_SENT",
-                            onClick = { bulkLocationCategory = "NOT_SENT"; bulkLocSelectedIds = emptySet() },
-                            label = { Text("2. Not Sent Files", fontSize = 11.sp) }
-                        )
-                        FilterChip(
-                            selected = bulkLocationCategory == "RECEIVED",
-                            onClick = { bulkLocationCategory = "RECEIVED"; bulkLocSelectedIds = emptySet() },
-                            label = { Text("3. Received Files", fontSize = 11.sp) }
-                        )
-                    }
-
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { bulkLocSelectedIds = bulkLocationFilteredFiles.map { it.id }.toSet() }) {
-                                Text("Select All", fontSize = 12.sp)
-                            }
-                            Button(onClick = { bulkLocSelectedIds = emptySet() }) {
-                                Text("Clear All", fontSize = 12.sp)
-                            }
-                        }
-
-                        Button(
-                            enabled = bulkLocSelectedIds.isNotEmpty(),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                            onClick = { showSetLocationDialog = true }
-                        ) {
-                            Text("Set Location (${bulkLocSelectedIds.size})", fontSize = 12.sp)
-                        }
-                    }
-
-                    Text(
-                        "Unassigned Files (${bulkLocationFilteredFiles.size}):",
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
-
-                    if (bulkLocationFilteredFiles.isEmpty()) {
-                        Text(
-                            "No files found with status '${
-                                when (bulkLocationCategory) {
-                                    "PASS_OVER" -> "Pass Over"
-                                    "NOT_SENT" -> "Not Sent to Court"
-                                    else -> "Received from Court"
-                                }
-                            }' having an empty storage location.",
-                            fontSize = 12.sp,
-                            color = Color.Gray,
-                            modifier = Modifier.padding(top = 16.dp)
-                        )
-                    } else {
-                        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            items(bulkLocationFilteredFiles) { record ->
-                                Card(
-                                    modifier = Modifier.fillMaxWidth().clickable {
-                                        bulkLocSelectedIds = if (bulkLocSelectedIds.contains(record.id)) {
-                                            bulkLocSelectedIds - record.id
-                                        } else {
-                                            bulkLocSelectedIds + record.id
-                                        }
-                                    },
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(8.dp).fillMaxWidth()
-                                    ) {
-                                        Checkbox(
-                                            checked = bulkLocSelectedIds.contains(record.id),
-                                            onCheckedChange = { isChecked ->
-                                                bulkLocSelectedIds = if (isChecked) {
-                                                    bulkLocSelectedIds + record.id
-                                                } else {
-                                                    bulkLocSelectedIds - record.id
-                                                }
-                                            }
-                                        )
-                                        Column(modifier = Modifier.padding(start = 8.dp)) {
-                                            Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                            Text("Status: ${record.status} | Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
-                                            if (record.remarks.isNotBlank()) {
-                                                Text("Remarks: ${record.remarks}", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                } else if (currentView == "SEARCH_MENU") {
+                if (currentView == "SEARCH_MENU") {
                     Text("Select Search Method:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
 
-                    // 5 FILTER CHIPS INCLUDING ADVANCED SEARCH
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             FilterChip(
@@ -505,7 +417,7 @@ fun MainAppScreen(
                             FilterChip(
                                 selected = activeSearchOption == "ADVANCED",
                                 onClick = { activeSearchOption = "ADVANCED" },
-                                label = { Text("5. Advanced Search", fontSize = 11.sp) }
+                                label = { Text("5. Multi-Criteria Search", fontSize = 11.sp) }
                             )
                         }
                     }
@@ -513,6 +425,189 @@ fun MainAppScreen(
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
                     when (activeSearchOption) {
+                        "ADVANCED" -> {
+                            var categoryDropdownExpanded by remember { mutableStateOf(false) }
+                            var locDropdownExpanded by remember { mutableStateOf(false) }
+                            var statusDropdownExpanded by remember { mutableStateOf(false) }
+
+                            val categoryOptions = listOf(
+                                "LOCATION" to "1. Storage Location",
+                                "JUDGE" to "2. Hon'ble Judge Name",
+                                "REMARKS" to "3. Remarks / Case Notes",
+                                "STATUS" to "4. Current Status"
+                            )
+
+                            Text("Select Search By Category:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                OutlinedTextField(
+                                    value = categoryOptions.first { it.first == searchCategory }.second,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    trailingIcon = {
+                                        IconButton(onClick = { categoryDropdownExpanded = true }) {
+                                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                DropdownMenu(
+                                    expanded = categoryDropdownExpanded,
+                                    onDismissRequest = { categoryDropdownExpanded = false }
+                                ) {
+                                    categoryOptions.forEach { pair ->
+                                        DropdownMenuItem(
+                                            text = { Text(pair.second) },
+                                            onClick = {
+                                                searchCategory = pair.first
+                                                categoryDropdownExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
+                            when (searchCategory) {
+                                "LOCATION" -> {
+                                    val locOptions = listOf("Listing Seat", "Disposal/Compliance Seat", "Shelf", "Other")
+                                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                        OutlinedTextField(
+                                            value = searchLocOption,
+                                            onValueChange = {},
+                                            label = { Text("Select Storage Location Option") },
+                                            readOnly = true,
+                                            trailingIcon = {
+                                                IconButton(onClick = { locDropdownExpanded = true }) {
+                                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        DropdownMenu(
+                                            expanded = locDropdownExpanded,
+                                            onDismissRequest = { locDropdownExpanded = false }
+                                        ) {
+                                            locOptions.forEach { opt ->
+                                                DropdownMenuItem(
+                                                    text = { Text(opt) },
+                                                    onClick = {
+                                                        searchLocOption = opt
+                                                        locDropdownExpanded = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    if (searchLocOption == "Other") {
+                                        OutlinedTextField(
+                                            value = searchCustomLocText,
+                                            onValueChange = { searchCustomLocText = it },
+                                            label = { Text("Enter Custom Location (e.g. Bundle No.)") },
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                        )
+                                    }
+                                }
+
+                                "JUDGE" -> {
+                                    OutlinedTextField(
+                                        value = searchJudgeTextInput,
+                                        onValueChange = { searchJudgeTextInput = it },
+                                        label = { Text("Enter Hon'ble Judge Name") },
+                                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                    )
+                                }
+
+                                "REMARKS" -> {
+                                    OutlinedTextField(
+                                        value = searchRemarksTextInput,
+                                        onValueChange = { searchRemarksTextInput = it },
+                                        label = { Text("Enter Remarks / Case Notes Keyword") },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                    )
+                                }
+
+                                "STATUS" -> {
+                                    val statusOptions = listOf("Dispatched", "Taken Up", "Pass Over", "Received from Court", "Not Sent to Court", "Entry Deleted")
+                                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                        OutlinedTextField(
+                                            value = searchStatusOption,
+                                            onValueChange = {},
+                                            label = { Text("Select Status Option") },
+                                            readOnly = true,
+                                            trailingIcon = {
+                                                IconButton(onClick = { statusDropdownExpanded = true }) {
+                                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                                }
+                                            },
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        DropdownMenu(
+                                            expanded = statusDropdownExpanded,
+                                            onDismissRequest = { statusDropdownExpanded = false }
+                                        ) {
+                                            statusOptions.forEach { opt ->
+                                                DropdownMenuItem(
+                                                    text = { Text(opt) },
+                                                    onClick = {
+                                                        searchStatusOption = opt
+                                                        statusDropdownExpanded = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Optional Interlocator Date Field
+                            OutlinedTextField(
+                                value = searchDateInterlocator,
+                                onValueChange = { searchDateInterlocator = it },
+                                label = { Text("Filter by Update Date (Optional, e.g. 04-08-26)") },
+                                leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                            )
+
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                            Text("Matching Search Results (${advancedSearchResults.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
+
+                            if (advancedSearchResults.isEmpty()) {
+                                Text("No files found matching the selected search criteria.", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 12.dp))
+                            } else {
+                                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    items(advancedSearchResults) { record ->
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
+                                            colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
+                                        ) {
+                                            Column(modifier = Modifier.padding(12.dp)) {
+                                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                    Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                                    Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
+                                                        Text(record.status, color = Color.White)
+                                                    }
+                                                }
+                                                Text("Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
+                                                if (record.judgeName.isNotBlank()) Text("Judge: ${record.judgeName}", fontSize = 12.sp, color = Color(0xFF9C27B0))
+                                                if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
+                                                if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+
+                                                Button(
+                                                    onClick = { activeUpdateRecord = record },
+                                                    modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
+                                                ) {
+                                                    Text("Update Status")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         "DATE" -> {
                             OutlinedTextField(
                                 value = searchDateInput,
@@ -673,202 +768,17 @@ fun MainAppScreen(
                             }
                         }
 
-                        "ADVANCED" -> {
-                            // OPTION 5: MULTI-CRITERIA ADVANCED SEARCH ENGINE
-                            var categoryDropdownExpanded by remember { mutableStateOf(false) }
-                            var locDropdownExpanded by remember { mutableStateOf(false) }
-                            var statusDropdownExpanded by remember { mutableStateOf(false) }
-
-                            Text("1. Select Search By Criteria:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                            
-                            // Category Selection Dropdown
-                            Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                                OutlinedTextField(
-                                    value = when (searchCategory) {
-                                        "LOCATION" -> "1. Storage Location"
-                                        "JUDGE" -> "2. Hon'ble Judge Name"
-                                        "REMARKS" -> "3. Remarks / Case Notes"
-                                        else -> "4. Current Status"
-                                    },
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Search Category") },
-                                    trailingIcon = {
-                                        IconButton(onClick = { categoryDropdownExpanded = true }) {
-                                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                DropdownMenu(
-                                    expanded = categoryDropdownExpanded,
-                                    onDismissRequest = { categoryDropdownExpanded = false }
-                                ) {
-                                    DropdownMenuItem(text = { Text("1. Storage Location") }, onClick = { searchCategory = "LOCATION"; categoryDropdownExpanded = false })
-                                    DropdownMenuItem(text = { Text("2. Hon'ble Judge Name") }, onClick = { searchCategory = "JUDGE"; categoryDropdownExpanded = false })
-                                    DropdownMenuItem(text = { Text("3. Remarks / Case Notes") }, onClick = { searchCategory = "REMARKS"; categoryDropdownExpanded = false })
-                                    DropdownMenuItem(text = { Text("4. Current Status") }, onClick = { searchCategory = "STATUS"; categoryDropdownExpanded = false })
-                                }
-                            }
-
-                            // Dynamic Input Fields Based on Category
-                            when (searchCategory) {
-                                "LOCATION" -> {
-                                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                                        OutlinedTextField(
-                                            value = searchLocOption,
-                                            onValueChange = {},
-                                            readOnly = true,
-                                            label = { Text("Select Storage Location *") },
-                                            trailingIcon = {
-                                                IconButton(onClick = { locDropdownExpanded = true }) {
-                                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                                                }
-                                            },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                        DropdownMenu(
-                                            expanded = locDropdownExpanded,
-                                            onDismissRequest = { locDropdownExpanded = false }
-                                        ) {
-                                            listOf("Listing Seat", "Disposal/Compliance Seat", "Shelf", "Other").forEach { opt ->
-                                                DropdownMenuItem(
-                                                    text = { Text(opt) },
-                                                    onClick = { searchLocOption = opt; locDropdownExpanded = false }
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    if (searchLocOption == "Other") {
-                                        OutlinedTextField(
-                                            value = searchCustomLocText,
-                                            onValueChange = { searchCustomLocText = it },
-                                            label = { Text("Enter Custom Storage Location") },
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                                        )
-                                    }
-                                }
-
-                                "JUDGE" -> {
-                                    OutlinedTextField(
-                                        value = searchJudgeTextInput,
-                                        onValueChange = { searchJudgeTextInput = it },
-                                        label = { Text("Enter Hon'ble Judge Name") },
-                                        leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                                    )
-                                }
-
-                                "REMARKS" -> {
-                                    OutlinedTextField(
-                                        value = searchRemarksTextInput,
-                                        onValueChange = { searchRemarksTextInput = it },
-                                        label = { Text("Enter Remarks / Case Notes Keyword") },
-                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                                    )
-                                }
-
-                                "STATUS" -> {
-                                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                                        OutlinedTextField(
-                                            value = searchStatusOption,
-                                            onValueChange = {},
-                                            readOnly = true,
-                                            label = { Text("Select Target Status *") },
-                                            trailingIcon = {
-                                                IconButton(onClick = { statusDropdownExpanded = true }) {
-                                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                                                }
-                                            },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                        DropdownMenu(
-                                            expanded = statusDropdownExpanded,
-                                            onDismissRequest = { statusDropdownExpanded = false }
-                                        ) {
-                                            listOf("Dispatched", "Taken Up", "Pass Over", "Received from Court", "Not Sent to Court", "Entry Deleted").forEach { opt ->
-                                                DropdownMenuItem(
-                                                    text = { Text(opt) },
-                                                    onClick = { searchStatusOption = opt; statusDropdownExpanded = false }
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Date Filter Interlocator Input (Optional)
-                            OutlinedTextField(
-                                value = searchDateInterlocator,
-                                onValueChange = { searchDateInterlocator = it },
-                                label = { Text("Filter by Update Date (Optional, e.g. 04-08-26)") },
-                                leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
-                                trailingIcon = {
-                                    if (searchDateInterlocator.isNotBlank()) {
-                                        IconButton(onClick = { searchDateInterlocator = "" }) {
-                                            Icon(Icons.Default.Clear, contentDescription = "Clear Date")
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                            )
-
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                            Text("Search Results (${advancedSearchResults.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
-
-                            if (advancedSearchResults.isEmpty()) {
-                                Text(
-                                    "No matching records found for the selected criteria.",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray,
-                                    modifier = Modifier.padding(top = 12.dp)
-                                )
-                            } else {
-                                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    items(advancedSearchResults) { record ->
-                                        Card(
-                                            modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
-                                            colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
-                                        ) {
-                                            Column(modifier = Modifier.padding(12.dp)) {
-                                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                    Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                                    Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
-                                                        Text(record.status, color = Color.White)
-                                                    }
-                                                }
-                                                Text("Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
-                                                if (record.judgeName.isNotBlank()) Text("Judge: ${record.judgeName}", fontSize = 12.sp, color = Color(0xFF9C27B0))
-                                                if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
-                                                if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
-
-                                                Button(
-                                                    onClick = { activeUpdateRecord = record },
-                                                    modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
-                                                ) {
-                                                    Text("Update Status")
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
                         else -> {
                             Text("Please select a search filter option above.", fontSize = 13.sp, color = Color.Gray)
                         }
                     }
 
                 } else if (currentView == "REPORTS_PANEL") {
-                    Text("Select PDF Report Type:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
+                    Text("PDF Reports & Data Recovery:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
 
                     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            Text("1. Entire Database Report", fontWeight = FontWeight.Bold)
+                            Text("1. Export Master Database PDF", fontWeight = FontWeight.Bold)
                             Button(
                                 onClick = {
                                     scope.launch {
@@ -883,9 +793,31 @@ fun MainAppScreen(
                         }
                     }
 
+                    // PDF RESTORE ACTION CARD
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("2. Rebuild Database from Master PDF", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                            Text("Restores all cases and audit logs directly from an exported Master Ledger PDF file.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                            Button(
+                                onClick = {
+                                    onPickPdf { uri ->
+                                        PdfImportHelper.restoreDatabaseFromPdf(context, uri, dao) {}
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                            ) {
+                                Text("IMPORT MASTER PDF & REBUILD DB")
+                            }
+                        }
+                    }
+
                     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            Text("2. Particular Case File Report", fontWeight = FontWeight.Bold)
+                            Text("3. Particular Case File Report", fontWeight = FontWeight.Bold)
                             OutlinedTextField(
                                 value = reportTargetFileNo,
                                 onValueChange = { reportTargetFileNo = it },
@@ -913,7 +845,7 @@ fun MainAppScreen(
 
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            Text("3. Date & Court Number Wise Report", fontWeight = FontWeight.Bold)
+                            Text("4. Date & Court Number Wise Report", fontWeight = FontWeight.Bold)
                             OutlinedTextField(
                                 value = reportTargetDate,
                                 onValueChange = { 
@@ -1031,6 +963,111 @@ fun MainAppScreen(
                                         }
                                     )
                                     Text("${record.fileNo} (${record.serialNo}) - Status: ${record.status}")
+                                }
+                            }
+                        }
+                    }
+
+                } else if (currentView == "BULK_LOCATION") {
+                    Text("Select Unassigned Category:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        FilterChip(
+                            selected = bulkLocationCategory == "PASS_OVER",
+                            onClick = { bulkLocationCategory = "PASS_OVER"; bulkLocSelectedIds = emptySet() },
+                            label = { Text("1. Pass Over Files", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = bulkLocationCategory == "NOT_SENT",
+                            onClick = { bulkLocationCategory = "NOT_SENT"; bulkLocSelectedIds = emptySet() },
+                            label = { Text("2. Not Sent Files", fontSize = 11.sp) }
+                        )
+                        FilterChip(
+                            selected = bulkLocationCategory == "RECEIVED",
+                            onClick = { bulkLocationCategory = "RECEIVED"; bulkLocSelectedIds = emptySet() },
+                            label = { Text("3. Received Files", fontSize = 11.sp) }
+                        )
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { bulkLocSelectedIds = bulkLocationFilteredFiles.map { it.id }.toSet() }) {
+                                Text("Select All", fontSize = 12.sp)
+                            }
+                            Button(onClick = { bulkLocSelectedIds = emptySet() }) {
+                                Text("Clear All", fontSize = 12.sp)
+                            }
+                        }
+
+                        Button(
+                            enabled = bulkLocSelectedIds.isNotEmpty(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            onClick = { showSetLocationDialog = true }
+                        ) {
+                            Text("Set Location (${bulkLocSelectedIds.size})", fontSize = 12.sp)
+                        }
+                    }
+
+                    Text(
+                        "Unassigned Files (${bulkLocationFilteredFiles.size}):",
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+
+                    if (bulkLocationFilteredFiles.isEmpty()) {
+                        Text(
+                            "No files found with status '${
+                                when (bulkLocationCategory) {
+                                    "PASS_OVER" -> "Pass Over"
+                                    "NOT_SENT" -> "Not Sent to Court"
+                                    else -> "Received from Court"
+                                }
+                            }' having an empty storage location.",
+                            fontSize = 12.sp,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(top = 16.dp)
+                        )
+                    } else {
+                        LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            items(bulkLocationFilteredFiles) { record ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().clickable {
+                                        bulkLocSelectedIds = if (bulkLocSelectedIds.contains(record.id)) {
+                                            bulkLocSelectedIds - record.id
+                                        } else {
+                                            bulkLocSelectedIds + record.id
+                                        }
+                                    },
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(8.dp).fillMaxWidth()
+                                    ) {
+                                        Checkbox(
+                                            checked = bulkLocSelectedIds.contains(record.id),
+                                            onCheckedChange = { isChecked ->
+                                                bulkLocSelectedIds = if (isChecked) {
+                                                    bulkLocSelectedIds + record.id
+                                                } else {
+                                                    bulkLocSelectedIds - record.id
+                                                }
+                                            }
+                                        )
+                                        Column(modifier = Modifier.padding(start = 8.dp)) {
+                                            Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                            Text("Status: ${record.status} | Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
+                                            if (record.remarks.isNotBlank()) {
+                                                Text("Remarks: ${record.remarks}", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1237,7 +1274,7 @@ fun MainAppScreen(
         }
     }
 
-    // BULK OPERATIONS "RECEIVED FROM COURT" DIALOG WITH LOCATION SELECTION & CHANGE AFFECTED DATE
+    // BULK OPERATIONS RECEIVED FROM COURT DIALOG WITH LOCATION & CHANGE AFFECTED DATE
     if (showBulkReceivedDialog) {
         var selectedLocation by remember { mutableStateOf("Listing Seat") }
         var dropdownExpanded by remember { mutableStateOf(false) }
@@ -1458,7 +1495,7 @@ fun MainAppScreen(
                                 selected = newStatus == opt, 
                                 onClick = { 
                                     newStatus = opt
-                                    locInput = if (opt == "Received from Court") "Shelf" else ""
+                                    locInput = if (opt == "Received from Court") "Listing Seat" else ""
                                     validationError = null 
                                 }
                             )
