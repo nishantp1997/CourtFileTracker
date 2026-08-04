@@ -96,6 +96,7 @@ dependencies {
 // iText 7 Core PDF Engine for Reading/Parsing Master Ledger PDFs
     implementation("com.itextpdf:itext7-core:7.2.5")
 
-
+// Google Gson (Fast WhatsApp JSON Backup/Restore)
+    implementation("com.google.code.gson:gson:2.10.1")
 
 }
