@@ -53,7 +53,6 @@ object PdfImportHelper {
                     return@launch
                 }
 
-                // Batch insert or update into Room database
                 dao.insertOrUpdateAll(extractedRecords)
 
                 withContext(Dispatchers.Main) {
@@ -100,13 +99,11 @@ object PdfImportHelper {
                 val latestDate = datesInHistory.lastOrNull() ?: "01-01-26"
                 val datesCsv = datesInHistory.joinToString(", ")
 
-                // Extract Court No from history if available
                 val courtMatch = Regex("Court No:\\s*(\\d+)").find(fullHistory)
                 if (courtMatch != null) {
                     currentCourtNo = courtMatch.groupValues[1]
                 }
 
-                // Extract Serial No from history if available
                 val serialMatch = Regex("Serial:\\s*([A-Za-z0-9\\s\\-\\.]+?)(?=\\||\$)").find(fullHistory)
                 if (serialMatch != null) {
                     currentSerialNo = serialMatch.groupValues[1].trim()
@@ -131,7 +128,6 @@ object PdfImportHelper {
         }
 
         for (line in lines) {
-            // Strip out PDF table column pipes[span_2](start_span)[span_2](end_span)
             val cleanLine = line.replace("|", "").trim()
             if (cleanLine.isBlank() || cleanLine.contains("ALLAHABAD HIGH COURT") || cleanLine.contains("Report Type:")) {
                 continue
@@ -141,7 +137,6 @@ object PdfImportHelper {
             if (caseMatch != null) {
                 commitCurrentRecord()
 
-                // Reset states for new file record
                 currentFileNo = caseMatch.groupValues[1]
                 currentStatus = "Dispatched"
                 currentCourtNo = "N/A"
@@ -153,7 +148,6 @@ object PdfImportHelper {
                 continue
             }
 
-            // Extract active status & location
             if (cleanLine.contains("Taken Up") || cleanLine.contains("Pass Over") || cleanLine.contains("Not Sent to Court") || cleanLine.contains("Received from Court") || cleanLine.contains("DELETED")) {
                 if (cleanLine.contains("Taken Up")) currentStatus = "Taken Up"
                 else if (cleanLine.contains("Pass Over")) currentStatus = "Pass Over"
@@ -167,7 +161,6 @@ object PdfImportHelper {
                 }
             }
 
-            // Capture history log lines containing dates
             if (dateRegex.containsMatchIn(cleanLine)) {
                 var formattedLine = cleanLine
                 if (!formattedLine.startsWith("[")) formattedLine = "[$formattedLine"
@@ -175,7 +168,6 @@ object PdfImportHelper {
             }
         }
 
-        // Commit final record
         commitCurrentRecord()
         return records
     }
