@@ -18,7 +18,6 @@ import java.util.Locale
 
 object JsonBackupHelper {
 
-    // Share Database File via WhatsApp or Android Share Sheet
     fun shareDatabaseToWhatsApp(context: Context, records: List<FileRecord>) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -42,7 +41,7 @@ object JsonBackupHelper {
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "application/json"
                     putExtra(Intent.EXTRA_STREAM, fileUri)
-                    setPackage("com.whatsapp") // Direct target to WhatsApp
+                    setPackage("com.whatsapp")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
 
@@ -50,7 +49,6 @@ object JsonBackupHelper {
                     try {
                         context.startActivity(shareIntent)
                     } catch (e: Exception) {
-                        // Fallback to general share sheet if WhatsApp package isn't directly bound
                         val chooserIntent = Intent.createChooser(
                             Intent(Intent.ACTION_SEND).apply {
                                 type = "application/json"
@@ -71,7 +69,6 @@ object JsonBackupHelper {
         }
     }
 
-    // Import JSON Database File received from WhatsApp / Storage
     fun importDatabaseFromJson(
         context: Context,
         fileUri: Uri,
@@ -83,7 +80,7 @@ object JsonBackupHelper {
                 val inputStream = context.contentResolver.openInputStream(fileUri)
                 val jsonString = inputStream?.bufferedReader()?.use { it.readText() }
 
-                if (jsonString.isNull_or_blank()) {
+                if (jsonString.isNullOrBlank()) {
                     withContext(Dispatchers.Main) {
                         Toast.makeText(context, "Failed to read backup file!", Toast.LENGTH_LONG).show()
                     }
@@ -101,7 +98,6 @@ object JsonBackupHelper {
                     return@launch
                 }
 
-                // Insert into Room DB
                 dao.insertOrUpdateAll(importedRecords)
 
                 withContext(Dispatchers.Main) {
@@ -120,6 +116,4 @@ object JsonBackupHelper {
             }
         }
     }
-
-    private fun String?.isNull_or_blank(): Boolean = this == null || this.trim().isEmpty()
 }
