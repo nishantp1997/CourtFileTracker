@@ -34,9 +34,14 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
 
     private var onPdfSelected: ((Uri) -> Unit)? = null
+    private var onJsonSelected: ((Uri) -> Unit)? = null
 
     private val pdfPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri?.let { onPdfSelected?.invoke(it) }
+    }
+
+    private val jsonPickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri?.let { onJsonSelected?.invoke(it) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,6 +59,10 @@ class MainActivity : ComponentActivity() {
                     onPickPdf = { callback ->
                         onPdfSelected = callback
                         pdfPickerLauncher.launch("application/pdf")
+                    },
+                    onPickJson = { callback ->
+                        onJsonSelected = callback
+                        jsonPickerLauncher.launch("*/*")
                     }
                 )
             }
@@ -75,7 +84,8 @@ fun MainAppScreen(
     onGoogleDriveLogin: () -> Unit,
     onBackup: () -> Unit,
     onRestore: () -> Unit,
-    onPickPdf: ((Uri) -> Unit) -> Unit
+    onPickPdf: ((Uri) -> Unit) -> Unit,
+    onPickJson: ((Uri) -> Unit) -> Unit
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -103,7 +113,7 @@ fun MainAppScreen(
     var searchSelectedCourt by remember { mutableStateOf<String?>(null) }
     var searchFileNoInput by remember { mutableStateOf("") }
 
-    // Option 5: Multi-Criteria Advanced Search States
+    // Option 5: Multi-Criteria Search States
     var searchCategory by remember { mutableStateOf("LOCATION") }
     var searchLocOption by remember { mutableStateOf("Listing Seat") }
     var searchCustomLocText by remember { mutableStateOf("") }
@@ -318,6 +328,32 @@ fun MainAppScreen(
                     )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                     
+                    // WHATSAPP BACKUP & RESTORE ACTIONS
+                    NavigationDrawerItem(
+                        label = { Text("Send Backup to WhatsApp") },
+                        selected = false,
+                        onClick = {
+                            scope.launch {
+                                val allRecords = dao.getAllRecords().first()
+                                JsonBackupHelper.shareDatabaseToWhatsApp(context, allRecords)
+                                drawerState.close()
+                            }
+                        },
+                        icon = { Icon(Icons.Default.Share, contentDescription = null) }
+                    )
+
+                    NavigationDrawerItem(
+                        label = { Text("Import JSON Backup File") },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            onPickJson { uri ->
+                                JsonBackupHelper.importDatabaseFromJson(context, uri, dao) {}
+                            }
+                        },
+                        icon = { Icon(Icons.Default.Refresh, contentDescription = null) }
+                    )
+
                     NavigationDrawerItem(
                         label = { Text("Rebuild DB from PDF") },
                         selected = false,
@@ -330,6 +366,8 @@ fun MainAppScreen(
                         icon = { Icon(Icons.Default.Refresh, contentDescription = null) }
                     )
                     
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
                     NavigationDrawerItem(
                         label = { Text("Connect Google Drive") },
                         selected = false,
@@ -561,7 +599,6 @@ fun MainAppScreen(
                                 }
                             }
 
-                            // Optional Interlocator Date Field
                             OutlinedTextField(
                                 value = searchDateInterlocator,
                                 onValueChange = { searchDateInterlocator = it },
@@ -793,7 +830,6 @@ fun MainAppScreen(
                         }
                     }
 
-                    // PDF RESTORE ACTION CARD
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
@@ -1274,7 +1310,7 @@ fun MainAppScreen(
         }
     }
 
-    // BULK OPERATIONS RECEIVED FROM COURT DIALOG WITH LOCATION & CHANGE AFFECTED DATE
+    // BULK RECEIVED FROM COURT DIALOG
     if (showBulkReceivedDialog) {
         var selectedLocation by remember { mutableStateOf("Listing Seat") }
         var dropdownExpanded by remember { mutableStateOf(false) }
@@ -1359,7 +1395,7 @@ fun MainAppScreen(
         )
     }
 
-    // SET BULK LOCATION DIALOG WITH DYNAMIC CHANGE AFFECTED DATE
+    // SET BULK LOCATION DIALOG
     if (showSetLocationDialog) {
         var inputLocText by remember { mutableStateOf("") }
         var changeAffectedDate by remember { mutableStateOf(currentDate) }
@@ -1457,7 +1493,7 @@ fun MainAppScreen(
         )
     }
 
-    // DISPOSAL UPDATE MODAL WITH CHANGE AFFECTED DATE PROMPT
+    // DISPOSAL UPDATE MODAL WITH CHANGE AFFECTED DATE
     val currentRecordForUpdate = activeUpdateRecord
     if (currentRecordForUpdate != null) {
         var newStatus by remember { mutableStateOf(currentRecordForUpdate.status.ifEmpty { "Taken Up" }) }
@@ -1634,7 +1670,7 @@ fun MainAppScreen(
         )
     }
 
-    // Audit Trace Dialog
+    // AUDIT TRACE DIALOG
     val currentRecordForTrace = activeTraceRecord
     if (currentRecordForTrace != null) {
         AlertDialog(
