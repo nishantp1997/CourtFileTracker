@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
+    <!-- Existing paths (Preserved) -->
     <cache-path name="pdf_cache" path="." />
     <external-files-path name="external_files" path="." />
+
+    <!-- Added for WhatsApp JSON Backup sharing -->
+    <cache-path name="backups" path="backups/" />
 </paths>
