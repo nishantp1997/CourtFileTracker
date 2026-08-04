@@ -108,7 +108,7 @@ interface FileRecordDao {
     @Query("SELECT * FROM file_records ORDER BY fileNo ASC")
     fun getAllRecords(): Flow<List<FileRecord>>
 
-    // Strict Zero-Ignored Keyword Search
+    // Search query engine
     @Query("""
         SELECT * FROM file_records 
         WHERE fileNo LIKE '%' || :query || '%' 
@@ -125,7 +125,7 @@ interface FileRecordDao {
     fun searchRecords(query: String): Flow<List<FileRecord>>
 }
 
-@Database(entities = [FileRecord::class], version = 15, exportSchema = false)
+@Database(entities = [FileRecord::class], version = 17, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileRecordDao(): FileRecordDao
 
