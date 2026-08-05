@@ -329,6 +329,19 @@ fun MainAppScreen(
                     )
 
                     NavigationDrawerItem(
+                        label = { Text("Download JSON Backup") },
+                        selected = false,
+                        onClick = {
+                            scope.launch {
+                                val allRecords = dao.getAllRecords().first()
+                                JsonBackupHelper.downloadDatabaseJson(context, allRecords)
+                                drawerState.close()
+                            }
+                        },
+                        icon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) }
+                    )
+
+                    NavigationDrawerItem(
                         label = { Text("Import JSON Backup File") },
                         selected = false,
                         onClick = {
