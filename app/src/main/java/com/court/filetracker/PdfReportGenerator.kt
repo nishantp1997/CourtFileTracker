@@ -1,230 +1,179 @@
 package com.court.filetracker
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.core.content.FileProvider
+import com.itextpdf.kernel.colors.DeviceRgb
+import com.itextpdf.kernel.font.PdfFontFactory
 import com.itextpdf.kernel.pdf.PdfDocument
-import com.itextpdf.kernel.pdf.PdfReader
-import com.itextpdf.kernel.pdf.canvas.parser.PdfCanvasProcessor
-import com.itextpdf.kernel.pdf.canvas.parser.PdfTextExtractor
-import com.itextpdf.kernel.pdf.canvas.parser.listener.LocationTextExtractionStrategy
+import com.itextpdf.kernel.pdf.PdfWriter
+import com.itextpdf.layout.Document
+import com.itextpdf.layout.element.Paragraph
+import com.itextpdf.layout.element.Table
+import com.itextpdf.layout.properties.TextAlignment
+import com.itextpdf.layout.properties.UnitValue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-object PdfImportHelper {
+object PdfReportGenerator {
 
-    fun restoreDatabaseFromPdf(
-        context: Context,
-        pdfUri: Uri,
-        dao: FileRecordDao,
-        onComplete: () -> Unit
-    ) {
+    /**
+     * Generate Master Ledger PDF with 100% Searchable Text Indexing
+     */
+    fun generateMasterReport(context: Context, records: List<FileRecord>) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val inputStream = context.contentResolver.openInputStream(pdfUri)
-                if (inputStream == null) {
+                if (records.isEmpty()) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "Unable to read selected PDF file!", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "No records available to export!", Toast.LENGTH_LONG).show()
                     }
                     return@launch
                 }
 
-                val pdfReader = PdfReader(inputStream)
-                val pdfDoc = PdfDocument(pdfReader)
-                val totalPages = pdfDoc.numberOfPages
+                val timeStamp = SimpleDateFormat("dd-MM-yy_HHmm", Locale.getDefault()).format(Date())
+                val fileName = "Master_Ledger_Report_$timeStamp.pdf"
+                val cacheDir = File(context.cacheDir, "pdf_cache")
+                if (!cacheDir.exists()) cacheDir.mkdirs()
 
-                val fullTextBuilder = StringBuilder()
+                val pdfFile = File(cacheDir, fileName)
+                val writer = PdfWriter(pdfFile)
+                val pdfDoc = PdfDocument(writer)
+                val document = Document(pdfDoc)
 
-                // Primary Pass: Location-based text extraction
-                for (i in 1..totalPages) {
-                    val page = pdfDoc.getPage(i)
-                    try {
-                        val strategy = LocationTextExtractionStrategy()
-                        val processor = PdfCanvasProcessor(strategy)
-                        processor.processPageContent(page)
-                        val pageText = strategy.getResultantText()
-                        
-                        if (pageText.isNotBlank()) {
-                            fullTextBuilder.append(pageText).append("\n")
-                        } else {
-                            // Fallback to basic text extractor if strategy returns empty
-                            fullTextBuilder.append(PdfTextExtractor.getTextFromPage(page)).append("\n")
-                        }
-                    } catch (e: Exception) {
-                        // Fallback on page render crash
-                        fullTextBuilder.append(PdfTextExtractor.getTextFromPage(page)).append("\n")
+                // Standard Searchable Font
+                val font = PdfFontFactory.createFont()
+
+                // Header Title
+                document.add(
+                    Paragraph("ALLAHABAD HIGH COURT - MASTER FILE LEDGER")
+                        .setFont(font)
+                        .setFontSize(14f)
+                        .setBold()
+                        .setTextAlignment(TextAlignment.CENTER)
+                )
+
+                document.add(
+                    Paragraph("Report Generated On: ${SimpleDateFormat("dd-MM-yyyy HH:mm", Locale.getDefault()).format(Date())} | Total Records: ${records.size}")
+                        .setFont(font)
+                        .setFontSize(9f)
+                        .setTextAlignment(TextAlignment.CENTER)
+                )
+
+                document.add(Paragraph("\n"))
+
+                // Table Layout: 5 Columns (File No, Court & Serial, Status & Location, History Log)
+                val table = Table(UnitValue.createPercentArray(floatArrayOf(18f, 18f, 20f, 44f)))
+                table.setWidth(UnitValue.createPercentValue(100f))
+
+                // Table Headers
+                val headers = listOf("File No.", "Court / Serial", "Active Status & Loc", "Audit Stack Trace Log")
+                headers.forEach { header ->
+                    table.addHeaderCell(
+                        Paragraph(header)
+                            .setFont(font)
+                            .setFontSize(10f)
+                            .setBold()
+                            .setFontColor(DeviceRgb(255, 255, 255))
+                            .setBackgroundColor(DeviceRgb(33, 150, 243))
+                    )
+                }
+
+                // Table Body Rows
+                records.forEach { record ->
+                    // Column 1: File No. (Searchable)
+                    table.addCell(
+                        Paragraph(record.fileNo)
+                            .setFont(font)
+                            .setFontSize(9f)
+                            .setBold()
+                    )
+
+                    // Column 2: Court & Serial No.
+                    val courtSerialText = if (record.courtNo != "N/A") {
+                        "Court No: ${record.courtNo}\nSerial: ${record.serialNo}"
+                    } else if (record.sentToChamber) {
+                        "Chamber: ${record.judgeName.ifEmpty { "Hon'ble Judge" }}"
+                    } else {
+                        "N/A"
                     }
+                    table.addCell(
+                        Paragraph(courtSerialText)
+                            .setFont(font)
+                            .setFontSize(8f)
+                    )
+
+                    // Column 3: Active Status & Storage Location
+                    val statusText = "${record.status}${if (record.storageLocation.isNotBlank()) " (${record.storageLocation})" else ""}${if (record.remarks.isNotBlank()) "\nRemarks: ${record.remarks}" else ""}"
+                    table.addCell(
+                        Paragraph(statusText)
+                            .setFont(font)
+                            .setFontSize(8f)
+                    )
+
+                    // Column 4: History Log Stack Trace
+                    table.addCell(
+                        Paragraph(record.historyLog.ifEmpty { "No History Recorded" })
+                            .setFont(font)
+                            .setFontSize(7f)
+                    )
                 }
 
-                pdfDoc.close()
-                pdfReader.close()
-                inputStream.close()
+                document.add(table)
+                document.close()
 
-                val rawContent = fullTextBuilder.toString()
-                var extractedRecords = parsePdfContent(rawContent)
+                openPdfFile(context, pdfFile)
 
-                // Secondary Recovery: Try basic line extraction if location strategy found 0 records
-                if (extractedRecords.isEmpty()) {
-                    val fallbackText = StringBuilder()
-                    val reader2 = PdfReader(context.contentResolver.openInputStream(pdfUri))
-                    val doc2 = PdfDocument(reader2)
-                    for (i in 1..doc2.numberOfPages) {
-                        fallbackText.append(PdfTextExtractor.getTextFromPage(doc2.getPage(i))).append("\n")
-                    }
-                    doc2.close()
-                    reader2.close()
-                    extractedRecords = parsePdfContent(fallbackText.toString())
-                }
-
-                if (extractedRecords.isEmpty()) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(
-                            context,
-                            "Failed to parse PDF! Ensure this is a text-based PDF generated by the app.",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                    return@launch
-                }
-
-                // Batch insert/update into Room DB
-                dao.insertOrUpdateAll(extractedRecords)
-
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(
-                        context,
-                        "Database Rebuilt Successfully! Restored ${extractedRecords.size} records.",
-                        Toast.LENGTH_LONG
-                    ).show()
-                    onComplete()
-                }
             } catch (e: Exception) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "PDF Restoration Failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "PDF Generation Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
             }
         }
     }
 
-    private fun parsePdfContent(rawText: String): List<FileRecord> {
-        val records = mutableListOf<FileRecord>()
-        
-        // Match case numbers (e.g., 10064/2026, 20783/2025, 123/2024)
-        val caseNoRegex = Regex("(\\b\\d{1,6}/\\d{4}\\b)")
-        val dateRegex = Regex("(\\d{2}-\\d{2}-\\d{2})")
+    /**
+     * Generate Single Case File Report PDF
+     */
+    fun generateSingleFileReport(context: Context, record: FileRecord) {
+        generateMasterReport(context, listOf(record))
+    }
 
-        val matches = caseNoRegex.findAll(rawText).toList()
-        if (matches.isEmpty()) return emptyList()
+    /**
+     * Generate Date & Court Specific Report PDF
+     */
+    fun generateDateCourtReport(context: Context, date: String, courtNo: String, records: List<FileRecord>) {
+        generateMasterReport(context, records)
+    }
 
-        for (i in matches.indices) {
-            val match = matches[i]
-            val fileNo = match.value
-
-            val startIndex = match.range.first
-            val endIndex = if (i < matches.size - 1) matches[i + 1].range.first else rawText.length
-            val blockText = rawText.substring(startIndex, endIndex)
-
-            var currentStatus = "Dispatched"
-            var currentCourtNo = "N/A"
-            var currentSerialNo = ""
-            var currentLocation = ""
-            var currentJudge = ""
-            var currentRemarks = ""
-            val historyLines = mutableListOf<String>()
-
-            val lines = blockText.split("\n")
-            for (line in lines) {
-                val cleanLine = line.replace("|", "").trim()
-
-                if (cleanLine.isBlank() || cleanLine.contains("ALLAHABAD HIGH COURT") || 
-                    cleanLine.contains("Report Type:") || cleanLine.contains("File No.") || 
-                    cleanLine.contains("Complete Audit Stack Trace Log")) {
-                    continue
-                }
-
-                // Status & Location Parsing
-                if (cleanLine.contains("Taken Up") || cleanLine.contains("Pass Over") || 
-                    cleanLine.contains("Not Sent to Court") || cleanLine.contains("Received from Court") || 
-                    cleanLine.contains("DELETED") || cleanLine.contains("Entry Deleted")) {
-                    
-                    if (cleanLine.contains("Taken Up")) currentStatus = "Taken Up"
-                    else if (cleanLine.contains("Pass Over")) currentStatus = "Pass Over"
-                    else if (cleanLine.contains("Not Sent to Court")) currentStatus = "Not Sent to Court"
-                    else if (cleanLine.contains("Received from Court")) currentStatus = "Received from Court"
-                    else if (cleanLine.contains("DELETED") || cleanLine.contains("Entry Deleted")) currentStatus = "Entry Deleted"
-
-                    val locMatch = Regex("\\(([^)]+)\\)").find(cleanLine)
-                    if (locMatch != null) {
-                        currentLocation = locMatch.groupValues[1].trim()
-                    }
-                }
-
-                // Audit History Extraction
-                if (dateRegex.containsMatchIn(cleanLine)) {
-                    var formattedLine = cleanLine
-                    val dateMatch = dateRegex.find(formattedLine)
-                    
-                    if (dateMatch != null) {
-                        val dateStart = formattedLine.indexOf(dateMatch.value)
-                        if (dateStart == 0 || (dateStart > 0 && formattedLine[dateStart - 1] != '[')) {
-                            formattedLine = "[" + formattedLine.substring(dateStart)
-                        } else if (dateStart > 0 && formattedLine[dateStart - 1] == '[') {
-                            formattedLine = formattedLine.substring(dateStart - 1)
-                        }
-                    }
-
-                    if (formattedLine.contains("Registered") || formattedLine.contains("Status changed") || 
-                        formattedLine.contains("Location updated") || formattedLine.contains("Bulk")) {
-                        historyLines.add(formattedLine)
-                    }
-                }
-            }
-
-            val fullHistory = historyLines.joinToString("\n")
-            
-            val datesInHistory = dateRegex.findAll(fullHistory)
-                .map { it.groupValues[1] }
-                .distinct()
-                .toList()
-
-            val latestDate = datesInHistory.lastOrNull() ?: "01-01-26"
-            val datesCsv = datesInHistory.joinToString(", ")
-
-            val courtMatch = Regex("Court No:\\s*(\\d+)").find(fullHistory)
-            if (courtMatch != null) {
-                currentCourtNo = courtMatch.groupValues[1]
-            }
-
-            val serialMatch = Regex("Serial:\\s*([A-Za-z0-9\\s\\-\\.]+?)(?=\\||\$)").find(fullHistory)
-            if (serialMatch != null) {
-                currentSerialNo = serialMatch.groupValues[1].trim()
-            }
-
-            val remarksMatch = Regex("Remarks:\\s*(.+)").find(fullHistory)
-            if (remarksMatch != null) {
-                currentRemarks = remarksMatch.groupValues[1].trim()
-            }
-
-            records.add(
-                FileRecord(
-                    fileNo = fileNo,
-                    dispatchDate = latestDate,
-                    dispatchDatesCsv = datesCsv,
-                    courtNo = currentCourtNo,
-                    serialNo = currentSerialNo,
-                    status = currentStatus,
-                    storageLocation = currentLocation,
-                    sentToChamber = currentStatus.contains("Chamber", ignoreCase = true) || currentJudge.isNotBlank(),
-                    judgeName = currentJudge,
-                    remarks = currentRemarks,
-                    historyLog = fullHistory
+    private suspend fun openPdfFile(context: Context, file: File) {
+        withContext(Dispatchers.Main) {
+            try {
+                val fileUri: Uri = FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    file
                 )
-            )
-        }
 
-        return records
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(fileUri, "application/pdf")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+
+                val chooser = Intent.createChooser(intent, "Open Report PDF via:")
+                context.startActivity(chooser)
+
+            } catch (e: Exception) {
+                Toast.makeText(context, "PDF generated at: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 }
