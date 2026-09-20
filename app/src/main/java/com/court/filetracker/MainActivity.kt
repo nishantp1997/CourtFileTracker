@@ -1635,7 +1635,8 @@ fun CaseCardWithMeta(
 }
 
 /**
- * Dedicated In-App Cause List Case Status Portal with Memory-Only PDF Viewer
+ * Dedicated In-App Cause List Case Status Portal with Smooth Multi-Directional Scrolling
+ * and Integrated "Find in Page" (Search / Jump) Controls
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -1644,23 +1645,128 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     var activePdfUrl by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
 
+    // Find in Page States
+    var isSearchActive by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var activeMatchIndex by remember { mutableStateOf(0) }
+    var totalMatches by remember { mutableStateOf(0) }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
     BackHandler {
-        if (webView?.canGoBack() == true) webView?.goBack() else onNavigateBack()
+        if (isSearchActive) {
+            isSearchActive = false
+            webView?.clearMatches()
+        } else if (webView?.canGoBack() == true) {
+            webView?.goBack()
+        } else {
+            onNavigateBack()
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        // Top Navigation Bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 Button(onClick = { if (webView?.canGoBack() == true) webView?.goBack() else onNavigateBack() }) {
                     Icon(Icons.Default.ArrowBack, contentDescription = "Back", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text("Back", fontSize = 12.sp)
                 }
                 OutlinedButton(onClick = { webView?.reload() }) {
                     Icon(Icons.Default.Refresh, contentDescription = "Reload", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
                     Text("Reload", fontSize = 12.sp)
                 }
+                IconButton(onClick = {
+                    isSearchActive = !isSearchActive
+                    if (!isSearchActive) {
+                        webView?.clearMatches()
+                        searchQuery = ""
+                        totalMatches = 0
+                        activeMatchIndex = 0
+                    }
+                }) {
+                    Icon(Icons.Default.Search, contentDescription = "Find in page")
+                }
             }
-            OutlinedButton(onClick = onNavigateBack) { Text("Exit Portal", fontSize = 12.sp) }
+            OutlinedButton(onClick = onNavigateBack) {
+                Text("Exit Portal", fontSize = 12.sp)
+            }
+        }
+
+        // Expandable Find in Page Bar
+        if (isSearchActive) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 4.dp),
+                elevation = CardDefaults.cardElevation(4.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { query ->
+                            searchQuery = query
+                            if (query.isNotBlank()) {
+                                webView?.findAllAsync(query)
+                            } else {
+                                webView?.clearMatches()
+                                totalMatches = 0
+                                activeMatchIndex = 0
+                            }
+                        },
+                        label = { Text("Find in page...", fontSize = 12.sp) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+
+                    if (totalMatches > 0) {
+                        Text(
+                            text = "${activeMatchIndex + 1}/$totalMatches",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    IconButton(
+                        enabled = totalMatches > 0,
+                        onClick = { webView?.findNext(false) } // Previous match
+                    ) {
+                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Previous match")
+                    }
+
+                    IconButton(
+                        enabled = totalMatches > 0,
+                        onClick = { webView?.findNext(true) } // Next match
+                    ) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next match")
+                    }
+
+                    IconButton(onClick = {
+                        isSearchActive = false
+                        webView?.clearMatches()
+                        searchQuery = ""
+                        totalMatches = 0
+                        activeMatchIndex = 0
+                    }) {
+                        Icon(Icons.Default.Close, contentDescription = "Close search")
+                    }
+                }
+            }
         }
 
         if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
@@ -1669,16 +1775,43 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+
+                        // Enable smooth scrolling and omnidirectional scrollbars
+                        isVerticalScrollBarEnabled = true
+                        isHorizontalScrollBarEnabled = true
+                        isScrollbarFadingEnabled = false
+                        scrollBarStyle = WebView.SCROLLBARS_INSIDE_OVERLAY
+                        overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
+
                         settings.apply {
                             javaScriptEnabled = true
                             domStorageEnabled = true
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
                             builtInZoomControls = true
                             displayZoomControls = false
+                            setSupportZoom(true)
                         }
+
+                        // Register Match Listener for Native Find in Page
+                        setFindListener { activeIndex, matchCount, isDoneCounting ->
+                            activeMatchIndex = activeIndex
+                            totalMatches = matchCount
+                        }
+
                         webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) { isLoading = true }
-                            override fun onPageFinished(view: WebView?, url: String?) { isLoading = false }
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                isLoading = true
+                            }
+
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                isLoading = false
+                            }
+
                             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                 val url = request?.url?.toString() ?: return false
                                 if (url.endsWith(".pdf", ignoreCase = true) || url.contains(".pdf?", ignoreCase = true)) {
@@ -1688,9 +1821,11 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                                 return false
                             }
                         }
+
                         setDownloadListener { url, _, _, _, _ ->
                             if (url.contains("pdf", ignoreCase = true)) activePdfUrl = url
                         }
+
                         loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
                         webView = this
                     }
@@ -1698,13 +1833,62 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             )
 
+            // Floating Navigation Overlay for Rapid Scrolling (Left, Right, Top, Bottom, Up, Down)
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                SmallFloatingActionButton(
+                    onClick = {
+                        // Scroll to top
+                        webView?.scrollTo(webView?.scrollX ?: 0, 0)
+                    },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Scroll to top", modifier = Modifier.size(18.dp))
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SmallFloatingActionButton(
+                        onClick = {
+                            // Smooth scroll left by 300px
+                            webView?.scrollBy(-300, 0)
+                        },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Scroll Left", modifier = Modifier.size(14.dp))
+                    }
+
+                    SmallFloatingActionButton(
+                        onClick = {
+                            // Smooth scroll right by 300px
+                            webView?.scrollBy(300, 0)
+                        },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Icon(Icons.Default.ArrowForward, contentDescription = "Scroll Right", modifier = Modifier.size(14.dp))
+                    }
+                }
+
+                SmallFloatingActionButton(
+                    onClick = {
+                        // Scroll to bottom
+                        webView?.scrollTo(webView?.scrollX ?: 0, 100000)
+                    },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Scroll to bottom", modifier = Modifier.size(18.dp))
+                }
+            }
+
             activePdfUrl?.let { url ->
                 EphemeralPdfViewerDialog(pdfUrl = url, onDismiss = { activePdfUrl = null })
             }
         }
     }
 }
-
 /**
  * Ephemeral In-Memory PDF Dialog: Discards and deletes the file upon exit
  */
