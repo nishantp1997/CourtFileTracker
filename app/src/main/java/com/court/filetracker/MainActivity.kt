@@ -1628,8 +1628,9 @@ fun CaseCardWithMeta(
 
 /**
  * In-App Cause List Case Status Portal
- * Captures form submission in-place using a JavaScript fetch bridge so the one-time 
- * captcha token is preserved and the binary PDF stream is returned directly to Android.
+ * Handles standard form submission for WebDownloadOrderSheet.do without fetch conflicts,
+ * captures the authenticated PDF stream via session-bound byte array extraction,
+ * and launches the rendered PDF directly.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -1672,68 +1673,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
             context.startActivity(Intent.createChooser(intent, "Open Judgment / Order Sheet"))
         } catch (e: Exception) {
             Toast.makeText(context, "No PDF viewer app found: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    class PdfJavaScriptInterface {
-        @JavascriptInterface
-        fun onPdfFetchStarted() {
-            scope.launch(Dispatchers.Main) {
-                isProcessingPdf = true
-            }
-        }
-
-        @JavascriptInterface
-        fun processBase64Pdf(base64Data: String) {
-            scope.launch(Dispatchers.IO) {
-                try {
-                    val cleanBase64 = if (base64Data.contains(",")) {
-                        base64Data.substringAfter(",")
-                    } else {
-                        base64Data
-                    }
-                    val pdfBytes = Base64.decode(cleanBase64, Base64.DEFAULT)
-
-                    if (pdfBytes.size > 4 &&
-                        pdfBytes[0] == 0x25.toByte() &&
-                        pdfBytes[1] == 0x50.toByte() &&
-                        pdfBytes[2] == 0x44.toByte() &&
-                        pdfBytes[3] == 0x46.toByte()
-                    ) {
-                        val targetDir = File(context.cacheDir, "judgments").apply { if (!exists()) mkdirs() }
-                        val outFile = File(targetDir, "Judgment_${System.currentTimeMillis()}.pdf")
-                        FileOutputStream(outFile).use { it.write(pdfBytes) }
-
-                        withContext(Dispatchers.Main) {
-                            isProcessingPdf = false
-                            openPdfFile(outFile)
-                        }
-                    } else {
-                        withContext(Dispatchers.Main) {
-                            isProcessingPdf = false
-                            val preview = String(pdfBytes.take(300).toByteArray())
-                            if (preview.contains("invalid", ignoreCase = true) || preview.contains("captcha", ignoreCase = true)) {
-                                Toast.makeText(context, "Captcha incorrect or session expired. Please re-enter.", Toast.LENGTH_LONG).show()
-                            } else {
-                                Toast.makeText(context, "Document not returned. Please re-check captcha.", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        isProcessingPdf = false
-                        Toast.makeText(context, "Failed to decode PDF: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-        }
-
-        @JavascriptInterface
-        fun onPdfFetchFailed(errorMsg: String) {
-            scope.launch(Dispatchers.Main) {
-                isProcessingPdf = false
-                Toast.makeText(context, "Error: $errorMsg", Toast.LENGTH_LONG).show()
-            }
         }
     }
 
@@ -1841,7 +1780,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             if (isProcessingPdf) {
                 Text(
-                    text = "Retrieving authenticated Judgment PDF...",
+                    text = "Retrieving Judgment / Order Sheet PDF...",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -1880,10 +1819,8 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             javaScriptCanOpenWindowsAutomatically = true
                             setSupportMultipleWindows(false)
                             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                            userAgentString = "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+                            userAgentString = "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
                         }
-
-                        addJavascriptInterface(PdfJavaScriptInterface(), "PdfBridge")
 
                         setFindListener { activeIndex, matchCount, _ ->
                             activeMatchIndex = activeIndex
@@ -1911,46 +1848,16 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 isLoading = false
 
-                                // Hook into the WebDownloadOrderSheet form submission directly
+                                // Ensure forms submit directly into this frame without opening an unhandled target="_blank"
                                 view?.evaluateJavascript(
                                     """
                                     (function() {
                                         try {
                                             var forms = document.querySelectorAll('form');
-                                            forms.forEach(function(form) {
-                                                if (form.dataset.pdfHooked) return;
-                                                form.dataset.pdfHooked = "true";
-
-                                                form.addEventListener('submit', function(e) {
-                                                    // Intercept the post action on the judgment portal
-                                                    if (window.location.href.indexOf('WebDownloadOrderSheet.do') !== -1 || form.action.indexOf('WebDownloadOrderSheet.do') !== -1) {
-                                                        e.preventDefault();
-                                                        PdfBridge.onPdfFetchStarted();
-
-                                                        var formData = new FormData(form);
-                                                        var actionUrl = form.action || window.location.href;
-
-                                                        fetch(actionUrl, {
-                                                            method: 'POST',
-                                                            body: formData,
-                                                            credentials: 'include'
-                                                        })
-                                                        .then(function(res) {
-                                                            return res.blob();
-                                                        })
-                                                        .then(function(blob) {
-                                                            var reader = new FileReader();
-                                                            reader.onloadend = function() {
-                                                                PdfBridge.processBase64Pdf(reader.result);
-                                                            };
-                                                            reader.readAsDataURL(blob);
-                                                        })
-                                                        .catch(function(err) {
-                                                            PdfBridge.onPdfFetchFailed(err.message);
-                                                        });
-                                                    }
-                                                });
-                                            });
+                                            for (var i = 0; i < forms.length; i++) {
+                                                forms[i].removeAttribute('target');
+                                                forms[i].setAttribute('target', '_self');
+                                            }
                                         } catch (e) {}
                                     })();
                                     """.trimIndent(), null
@@ -1962,6 +1869,60 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             }
                         }
 
+                        // Listen directly for binary PDF streams served after the form is submitted
+                        setDownloadListener { downloadUrl, userAgent, contentDisposition, mimeType, contentLength ->
+                            isProcessingPdf = true
+                            scope.launch(Dispatchers.IO) {
+                                try {
+                                    val cookie = CookieManager.getInstance().getCookie(downloadUrl)
+                                    val conn = URL(downloadUrl).openConnection() as HttpURLConnection
+                                    conn.connectTimeout = 30000
+                                    conn.readTimeout = 30000
+                                    if (!cookie.isNullOrBlank()) {
+                                        conn.setRequestProperty("Cookie", cookie)
+                                    }
+                                    conn.setRequestProperty("User-Agent", userAgent ?: settings.userAgentString)
+                                    conn.setRequestProperty("Accept", "application/pdf,*/*")
+                                    conn.instanceFollowRedirects = true
+
+                                    val streamBytes = conn.inputStream.readBytes()
+
+                                    // Verify PDF magic bytes: %PDF (0x25, 0x50, 0x44, 0x46)
+                                    if (streamBytes.size > 4 && 
+                                        streamBytes[0] == 0x25.toByte() && 
+                                        streamBytes[1] == 0x50.toByte() && 
+                                        streamBytes[2] == 0x44.toByte() && 
+                                        streamBytes[3] == 0x46.toByte()
+                                    ) {
+                                        val targetDir = File(context.cacheDir, "judgments").apply { if (!exists()) mkdirs() }
+                                        val outFile = File(targetDir, "OrderSheet_${System.currentTimeMillis()}.pdf")
+                                        FileOutputStream(outFile).use { it.write(streamBytes) }
+
+                                        withContext(Dispatchers.Main) {
+                                            isProcessingPdf = false
+                                            openPdfFile(outFile)
+                                        }
+                                    } else {
+                                        withContext(Dispatchers.Main) {
+                                            isProcessingPdf = false
+                                            val preview = String(streamBytes.take(400).toByteArray())
+                                            if (preview.contains("alert(", ignoreCase = true) || preview.contains("invalid", ignoreCase = true)) {
+                                                Toast.makeText(context, "Invalid captcha entered. Please try again.", Toast.LENGTH_LONG).show()
+                                            } else {
+                                                // If HTML response returned, reload the error page in the webview to show what the court portal responded with
+                                                view?.loadDataWithBaseURL(downloadUrl, preview, "text/html", "UTF-8", null)
+                                            }
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        isProcessingPdf = false
+                                        Toast.makeText(context, "Failed to download PDF: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                        }
+
                         loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
                         webView = this
                     }
@@ -1969,7 +1930,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Multi-Directional Pan Controls
+            // Pan and scroll controls
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
