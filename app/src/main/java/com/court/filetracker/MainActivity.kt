@@ -113,7 +113,7 @@ fun MainAppScreen(
     var remarksInput by remember { mutableStateOf("") }
     var judgeNameInput by remember { mutableStateOf("") }
 
-    // Navigation Views: "MAIN", "ADD_CAUSE_LIST", "DISPATCH_CAUSE_LIST", "SEARCH_MENU", "BULK", "REPORTS_PANEL"
+    // Navigation Views: "MAIN", "ADD_CAUSE_LIST", "DISPATCH_CAUSE_LIST", "REPORTS_PANEL"
     var currentView by remember { mutableStateOf("MAIN") }
 
     // Meta-Data Modal State
@@ -398,7 +398,6 @@ fun MainAppScreen(
 
                                                 Button(
                                                     onClick = {
-                                                        // Direct Dispatch
                                                         fileSerialInput = clRecord.fileSerialNo
                                                         fileYearInput = clRecord.fileYear
                                                         courtNoInput = clRecord.courtNo
@@ -738,7 +737,7 @@ fun AddCaseMetaDataDialog(
     onDismiss: () -> Unit,
     onSave: (FileRecord) -> Unit
 ) {
-    var metaType by remember { mutableStateOf("REPORT") } // "REPORT" or "APPLICATION"
+    var metaType by remember { mutableStateOf("REPORT") }
     var selectedReportOption by remember { mutableStateOf("Notice: Served") }
     var customReportText by remember { mutableStateOf("") }
     var reportDateInput by remember { mutableStateOf("") }
@@ -803,14 +802,14 @@ fun AddCaseMetaDataDialog(
                         OutlinedTextField(
                             value = appNoInput,
                             onValueChange = { appNoInput = it },
-                            label = { Text("App No (e.g. 9)") },[cite: 1]
+                            label = { Text("App No (e.g. 9)") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.weight(1f)
                         )
                         OutlinedTextField(
                             value = appYearInput,
                             onValueChange = { appYearInput = it },
-                            label = { Text("Year (e.g. 2026)") },[cite: 1]
+                            label = { Text("Year (e.g. 2026)") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.weight(1f)
                         )
