@@ -694,25 +694,57 @@ fun MainAppScreen(
                             }
 
                             "FILE_NO" -> {
-                                OutlinedTextField(
-                                    value = searchFileNoInput,
-                                    onValueChange = { searchFileNoInput = it },
-                                    label = { Text("Enter File Number (e.g. 11000/2026)") },
-                                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
-                                )
-                                Text("Matching Files (${fileNoSearchResults.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
-                                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                                    items(fileNoSearchResults) { record ->
-                                        CaseCardWithMeta(
-                                            record = record,
-                                            onClick = { activeTraceRecord = record },
-                                            onUpdate = { activeUpdateRecord = record },
-                                            onAddMeta = { targetFileForMetaData = record }
-                                        )
-                                    }
-                                }
-                            }
+    OutlinedTextField(
+        value = searchFileNoInput,
+        onValueChange = { searchFileNoInput = it },
+        label = { Text("Enter File Number (e.g. 11000/2026)") },
+        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+        trailingIcon = {
+            if (searchFileNoInput.isNotEmpty()) {
+                IconButton(onClick = { searchFileNoInput = "" }) {
+                    Icon(Icons.Default.Close, contentDescription = "Clear")
+                }
+            }
+        }
+    )
+
+    // Only consider matches when the input query contains non-whitespace text
+    val activeResults = remember(fileNoSearchResults, normalizedSearchFileNo) {
+        if (normalizedSearchFileNo.isBlank()) emptyList() else fileNoSearchResults
+    }
+
+    if (normalizedSearchFileNo.isNotBlank()) {
+        Text(
+            text = "Matching Files (${activeResults.size}):",
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(vertical = 4.dp)
+        )
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+            items(activeResults) { record ->
+                CaseCardWithMeta(
+                    record = record,
+                    onClick = { activeTraceRecord = record },
+                    onUpdate = { activeUpdateRecord = record },
+                    onAddMeta = { targetFileForMetaData = record }
+                )
+            }
+        }
+    } else {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Enter a file number above to search records.",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
 
                             "CHAMBER" -> {
                                 Text("All In Chamber Files (${chamberFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
