@@ -2033,3 +2033,282 @@ fun EphemeralBytePdfViewerDialog(pdfBytes: ByteArray, onDismiss: () -> Unit) {
         }
     }
 }
+
+/**
+ * Add Cause List In-App Web View with Detection Confirmation
+ */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun CauseListIngestionWebView(
+    courtNo: String,
+    date: String,
+    causeListDao: CauseListDao,
+    onClose: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var pendingPdfUrl by remember { mutableStateOf<String?>(null) }
+    var isParsing by remember { mutableStateOf(false) }
+    var webView: WebView? by remember { mutableStateOf(null) }
+
+    BackHandler {
+        if (webView?.canGoBack() == true) webView?.goBack() else onClose()
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Court $courtNo | Date: $date", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Button(onClick = onClose) { Text("Exit Portal", fontSize = 12.sp) }
+        }
+
+        if (isParsing) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            Text("Parsing Cause List PDF locally into SQLite...", fontSize = 11.sp, modifier = Modifier.padding(vertical = 4.dp))
+        }
+
+        AndroidView(
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    settings.apply {
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        builtInZoomControls = true
+                        displayZoomControls = false
+                    }
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                            val url = request?.url?.toString() ?: return false
+                            if (url.endsWith(".pdf", ignoreCase = true) || url.contains(".pdf?", ignoreCase = true)) {
+                                pendingPdfUrl = url
+                                return true
+                            }
+                            return false
+                        }
+                    }
+                    setDownloadListener { url, _, _, _, _ ->
+                        if (url.contains("pdf", ignoreCase = true)) pendingPdfUrl = url
+                    }
+                    loadUrl("https://www.allahabadhighcourt.in/causelist/")
+                    webView = this
+                }
+            },
+            modifier = Modifier.fillMaxSize().weight(1f)
+        )
+    }
+
+    pendingPdfUrl?.let { url ->
+        AlertDialog(
+            onDismissRequest = { pendingPdfUrl = null },
+            title = { Text("Do You Wish to add this PDF?") },
+            text = { Text("Parse all serial numbers, status tags, case numbers, and party names for Court $courtNo on $date?", fontSize = 12.sp) },
+            confirmButton = {
+                Button(onClick = {
+                    val pdfToParse = url
+                    pendingPdfUrl = null
+                    isParsing = true
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val conn = URL(pdfToParse).openConnection() as HttpURLConnection
+                            conn.connectTimeout = 15000
+                            conn.readTimeout = 15000
+                            val stream = conn.inputStream
+                            val parsedCases = CauseListParser.parseCauseListPdf(stream, courtNo, date)
+                            stream.close()
+
+                            if (parsedCases.isNotEmpty()) {
+                                causeListDao.insertAll(parsedCases)
+                                withContext(Dispatchers.Main) {
+                                    isParsing = false
+                                    Toast.makeText(context, "Imported ${parsedCases.size} Cases for Court $courtNo!", Toast.LENGTH_LONG).show()
+                                }
+                            } else {
+                                withContext(Dispatchers.Main) {
+                                    isParsing = false
+                                    Toast.makeText(context, "No cases extracted from PDF!", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                isParsing = false
+                                Toast.makeText(context, "Parse Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                }) { Text("Yes") }
+            },
+            dismissButton = { TextButton(onClick = { pendingPdfUrl = null }) { Text("No") } }
+        )
+    }
+}
+
+/**
+ * Add Case Meta-Data Attachment Dialog
+ * - No default selection: User must explicitly choose an option
+ */
+@Composable
+fun AddCaseMetaDataDialog(
+    record: FileRecord,
+    onDismiss: () -> Unit,
+    onSave: (FileRecord) -> Unit
+) {
+    var metaType by remember { mutableStateOf("REPORT") } // "REPORT" or "APPLICATION"
+    
+    // Default to empty string so nothing is pre-selected
+    var selectedReportOption by remember { mutableStateOf("") }
+    var customReportText by remember { mutableStateOf("") }
+    var reportDateInput by remember { mutableStateOf("") }
+    
+    var appNoInput by remember { mutableStateOf("") }
+    var appYearInput by remember { mutableStateOf("2026") }
+
+    val reportOptions = listOf(
+        "Notice: Served",
+        "Notice: Unserved",
+        "Compromise: Done",
+        "Compromise: Not Done",
+        "Mediation Report",
+        "Other Report"
+    )
+
+    val isReportValid = if (selectedReportOption == "Other Report") {
+        customReportText.isNotBlank()
+    } else {
+        selectedReportOption.isNotBlank()
+    }
+
+    val isAppValid = appNoInput.isNotBlank() && appYearInput.isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Case Meta-Data: ${record.fileNo}", fontSize = 15.sp) },
+        text = {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceAround
+                ) {
+                    FilterChip(
+                        selected = metaType == "REPORT",
+                        onClick = { metaType = "REPORT" },
+                        label = { Text("Keep Report") }
+                    )
+                    FilterChip(
+                        selected = metaType == "APPLICATION",
+                        onClick = { metaType = "APPLICATION" },
+                        label = { Text("Add Application") }
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (metaType == "REPORT") {
+                    var dropdownExpanded by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = selectedReportOption.ifEmpty { "Choose Report Type..." },
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Select Report Type *") },
+                            trailingIcon = {
+                                IconButton(onClick = { dropdownExpanded = true }) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        DropdownMenu(
+                            expanded = dropdownExpanded,
+                            onDismissRequest = { dropdownExpanded = false }
+                        ) {
+                            reportOptions.forEach { opt ->
+                                DropdownMenuItem(
+                                    text = { Text(opt) },
+                                    onClick = {
+                                        selectedReportOption = opt
+                                        dropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    if (selectedReportOption == "Other Report") {
+                        OutlinedTextField(
+                            value = customReportText,
+                            onValueChange = { customReportText = it },
+                            label = { Text("Specify Report Description *") },
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = reportDateInput,
+                        onValueChange = { reportDateInput = it },
+                        label = { Text("Report Date (Optional, e.g. 21-09-26)") },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = appNoInput,
+                            onValueChange = { appNoInput = it },
+                            label = { Text("App No (e.g. 9)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = appYearInput,
+                            onValueChange = { appYearInput = it },
+                            label = { Text("Year (e.g. 2026)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Text(
+                        "Format: [App No]/[Year]",
+                        fontSize = 11.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = (metaType == "REPORT" && isReportValid) || (metaType == "APPLICATION" && isAppValid),
+                onClick = {
+                    val currentDate = SimpleDateFormat("dd-MM-yy", Locale.getDefault()).format(Date())
+                    if (metaType == "REPORT") {
+                        val label = if (selectedReportOption == "Other Report") customReportText.trim() else selectedReportOption
+                        val suffix = if (reportDateInput.isNotBlank()) " (Date: ${reportDateInput.trim()})" else ""
+                        val str = "$label$suffix"
+                        val updatedReports = if (record.reportsOnRecord.isBlank()) str else "${record.reportsOnRecord}\n$str"
+                        val log = "${record.historyLog}\n[$currentDate] Placed on Record -> $str"
+                        onSave(record.copy(reportsOnRecord = updatedReports, historyLog = log))
+                    } else {
+                        val app = "${appNoInput.trim()}/${appYearInput.trim()}"
+                        val updatedApps = if (record.applicationsOnRecord.isBlank()) app else "${record.applicationsOnRecord}, $app"
+                        val log = "${record.historyLog}\n[$currentDate] Application Tagged -> $app"
+                        onSave(record.copy(applicationsOnRecord = updatedApps, historyLog = log))
+                    }
+                }
+            ) {
+                Text("Save Meta-Data")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
