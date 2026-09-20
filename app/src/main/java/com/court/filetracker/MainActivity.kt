@@ -94,6 +94,12 @@ fun normalizeDate(input: String): String = input.trim()
 fun normalizeSearchQuery(input: String): String = input.trim()
 fun stripLeadingZeros(input: String): String = input.trim().trimStart('0').ifEmpty { "0" }
 
+/**
+ * Multi-Date Historical Dispatch Tracking Engine
+ * Accurately parses all dispatch events for a target date out of the file's historyLog,
+ * cross-checks dispatchDatesCsv, and checks active dispatchDate.
+ * Ensures a file dispatched multiple times across different dates appears on every date it was sent.
+ */
 fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<String> {
     val courtsFound = mutableSetOf<String>()
 
@@ -869,30 +875,12 @@ fun MainAppScreen(
                                         Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
                                             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                                 items(advancedSearchResults) { record ->
-                                                    Card(
-                                                        modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
-                                                        colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
-                                                    ) {
-                                                        Column(modifier = Modifier.padding(12.dp)) {
-                                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                                Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                                                Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
-                                                                    Text(record.status, color = Color.White)
-                                                                }
-                                                            }
-                                                            Text("Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
-                                                            if (record.judgeName.isNotBlank()) Text("Judge: ${record.judgeName}", fontSize = 12.sp, color = Color(0xFF9C27B0))
-                                                            if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
-                                                            if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
-
-                                                            Button(
-                                                                onClick = { activeUpdateRecord = record },
-                                                                modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
-                                                            ) {
-                                                                Text("Update Status")
-                                                            }
-                                                        }
-                                                    }
+                                                    CaseCardWithMeta(
+                                                        record = record,
+                                                        onClick = { activeTraceRecord = record },
+                                                        onUpdate = { activeUpdateRecord = record },
+                                                        onAddMeta = { targetFileForMetaData = record }
+                                                    )
                                                 }
                                             }
                                         }
@@ -926,30 +914,12 @@ fun MainAppScreen(
                                         Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
                                             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                                 items(searchCourtFiles) { record ->
-                                                    val courtForThisDate = getDispatchedCourtsForDate(record, normalizedSearchDate).joinToString(",")
-                                                    Card(
-                                                        modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
-                                                        colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
-                                                    ) {
-                                                        Column(modifier = Modifier.padding(12.dp)) {
-                                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                                Text("File: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                                                Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
-                                                                    Text(record.status, color = Color.White)
-                                                                }
-                                                            }
-                                                            Text("Dispatched Court on $normalizedSearchDate: Court $courtForThisDate", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                                            Text("Current Status: ${record.status} | Location: ${record.storageLocation.ifEmpty { "N/A" }}", fontSize = 12.sp)
-                                                            if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
-
-                                                            Button(
-                                                                onClick = { activeUpdateRecord = record },
-                                                                modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
-                                                            ) {
-                                                                Text("Update Status")
-                                                            }
-                                                        }
-                                                    }
+                                                    CaseCardWithMeta(
+                                                        record = record,
+                                                        onClick = { activeTraceRecord = record },
+                                                        onUpdate = { activeUpdateRecord = record },
+                                                        onAddMeta = { targetFileForMetaData = record }
+                                                    )
                                                 }
                                             }
                                         }
@@ -972,30 +942,12 @@ fun MainAppScreen(
                                         Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
                                             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                                 items(fileNoSearchResults) { record ->
-                                                    Card(
-                                                        modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
-                                                        colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
-                                                    ) {
-                                                        Column(modifier = Modifier.padding(12.dp)) {
-                                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                                Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                                                Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
-                                                                    Text(record.status, color = Color.White)
-                                                                }
-                                                            }
-                                                            Text("All Dates: ${record.dispatchDatesCsv}", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-                                                            Text("Court: ${record.courtNo} | Serial: ${record.serialNo}", fontSize = 12.sp)
-                                                            if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp)
-                                                            if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
-
-                                                            Button(
-                                                                onClick = { activeUpdateRecord = record },
-                                                                modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
-                                                            ) {
-                                                                Text("Update Status")
-                                                            }
-                                                        }
-                                                    }
+                                                    CaseCardWithMeta(
+                                                        record = record,
+                                                        onClick = { activeTraceRecord = record },
+                                                        onUpdate = { activeUpdateRecord = record },
+                                                        onAddMeta = { targetFileForMetaData = record }
+                                                    )
                                                 }
                                             }
                                         }
@@ -1007,28 +959,12 @@ fun MainAppScreen(
                                     Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
                                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                             items(chamberFiles) { record ->
-                                                Card(
-                                                    modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
-                                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                                ) {
-                                                    Column(modifier = Modifier.padding(12.dp)) {
-                                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                            Text("File: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                                            Badge(containerColor = Color(0xFF9C27B0)) {
-                                                                Text("Chamber: ${record.judgeName.ifEmpty { "Hon'ble Judge" }}", color = Color.White)
-                                                            }
-                                                        }
-                                                        Text("Last Date: ${record.dispatchDate}", fontSize = 12.sp)
-                                                        if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
-
-                                                        Button(
-                                                            onClick = { activeUpdateRecord = record },
-                                                            modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
-                                                        ) {
-                                                            Text("Update Status")
-                                                        }
-                                                    }
-                                                }
+                                                CaseCardWithMeta(
+                                                    record = record,
+                                                    onClick = { activeTraceRecord = record },
+                                                    onUpdate = { activeUpdateRecord = record },
+                                                    onAddMeta = { targetFileForMetaData = record }
+                                                )
                                             }
                                         }
                                     }
@@ -1039,29 +975,12 @@ fun MainAppScreen(
                                     Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
                                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                             items(takenUpFiles) { record ->
-                                                Card(
-                                                    modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
-                                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                                ) {
-                                                    Column(modifier = Modifier.padding(12.dp)) {
-                                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                            Text("File: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                                            Badge(containerColor = MaterialTheme.colorScheme.primary) {
-                                                                Text(record.status, color = Color.White)
-                                                            }
-                                                        }
-                                                        Text("Court No: ${record.courtNo} | Serial: ${record.serialNo}", fontSize = 12.sp)
-                                                        if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
-                                                        if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
-
-                                                        Button(
-                                                            onClick = { activeUpdateRecord = record },
-                                                            modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
-                                                        ) {
-                                                            Text("Update Status")
-                                                        }
-                                                    }
-                                                }
+                                                CaseCardWithMeta(
+                                                    record = record,
+                                                    onClick = { activeTraceRecord = record },
+                                                    onUpdate = { activeUpdateRecord = record },
+                                                    onAddMeta = { targetFileForMetaData = record }
+                                                )
                                             }
                                         }
                                     }
@@ -1562,29 +1481,12 @@ fun MainAppScreen(
                             Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
                                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                     items(recentTwoFiles) { record ->
-                                        Card(
-                                            modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
-                                            colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
-                                        ) {
-                                            Column(modifier = Modifier.padding(12.dp)) {
-                                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                    Text("File: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                                    Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else if (record.sentToChamber) Color(0xFF9C27B0) else MaterialTheme.colorScheme.primary) {
-                                                        Text(if (record.sentToChamber) "Chamber: ${record.judgeName}" else record.status, color = Color.White)
-                                                    }
-                                                }
-                                                if (record.courtNo != "N/A") Text("Court: ${record.courtNo} | ${record.serialNo}", fontSize = 12.sp)
-                                                if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
-                                                if (record.remarks.isNotBlank()) Text("📝 ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
-
-                                                Button(
-                                                    onClick = { activeUpdateRecord = record },
-                                                    modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
-                                                ) {
-                                                    Text("Update Status")
-                                                }
-                                            }
-                                        }
+                                        CaseCardWithMeta(
+                                            record = record,
+                                            onClick = { activeTraceRecord = record },
+                                            onUpdate = { activeUpdateRecord = record },
+                                            onAddMeta = { targetFileForMetaData = record }
+                                        )
                                     }
                                 }
                             }
@@ -2053,8 +1955,12 @@ fun CaseCardWithMeta(
             if (record.applicationsOnRecord.isNotBlank()) Text("📋 Apps: ${record.applicationsOnRecord}", fontSize = 11.sp, color = Color(0xFF6A1B9A))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
-                OutlinedButton(onClick = onAddMeta) { Text("Meta-Data", fontSize = 11.sp) }
-                Button(onClick = onUpdate) { Text("Update Status", fontSize = 11.sp) }
+                OutlinedButton(onClick = onAddMeta, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                    Text("Meta-Data", fontSize = 11.sp)
+                }
+                Button(onClick = onUpdate, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                    Text("Update Status", fontSize = 11.sp)
+                }
             }
         }
     }
