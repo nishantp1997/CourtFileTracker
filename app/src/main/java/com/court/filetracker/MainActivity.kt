@@ -1994,10 +1994,42 @@ fun MainAppScreen(
     }
 }
 
+@Composable
+fun CaseCardWithMeta(
+    record: FileRecord,
+    onClick: () -> Unit,
+    onUpdate: () -> Unit,
+    onAddMeta: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
+                    Text(record.status, color = Color.White)
+                }
+            }
+            Text("Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
+            if (record.storageLocation.isNotBlank()) Text("📍 Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
+            if (record.remarks.isNotBlank()) Text("📝 Remarks: ${record.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
+            if (record.reportsOnRecord.isNotBlank()) Text("📑 Reports: ${record.reportsOnRecord.replace("\n", ", ")}", fontSize = 11.sp, color = Color(0xFF1565C0))
+            if (record.applicationsOnRecord.isNotBlank()) Text("📋 Apps: ${record.applicationsOnRecord}", fontSize = 11.sp, color = Color(0xFF6A1B9A))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
+                OutlinedButton(onClick = onAddMeta) { Text("Meta-Data", fontSize = 11.sp) }
+                Button(onClick = onUpdate) { Text("Update Status", fontSize = 11.sp) }
+            }
+        }
+    }
+}
+
 /**
  * In-App Cause List Case Status Portal
- * Handles standard form submission for WebDownloadOrderSheet.do,
- * captures authenticated PDF streams, and launches the rendered PDF directly.
+ * Solves the WebDownloadOrderSheet.do frozen page issue by capturing the PDF stream 
+ * generated after captcha submission and opening it via FileProvider.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -2665,25 +2697,21 @@ fun AddCaseMetaDataDialog(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
                     )
                 } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = appNoInput,
-                            onValueChange = { appNoInput = it },
-                            label = { Text("App No (e.g. 9)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = appYearInput,
-                            onValueChange = { appYearInput = it },
-                            label = { Text("Year (e.g. 2026)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                    OutlinedTextField(
+                        value = appNoInput,
+                        onValueChange = { appNoInput = it },
+                        label = { Text("App No (e.g. 9)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = appYearInput,
+                        onValueChange = { appYearInput = it },
+                        label = { Text("Year (e.g. 2026)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Text(
                         "Format: [App No]/[Year]",
                         fontSize = 11.sp,
