@@ -52,6 +52,7 @@ import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import android.util.Base64
 
 class MainActivity : ComponentActivity() {
 
@@ -1624,9 +1625,6 @@ fun CaseCardWithMeta(
     }
 }
 
-import android.util.Base64
-import java.io.File
-import java.io.FileOutputStream
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
