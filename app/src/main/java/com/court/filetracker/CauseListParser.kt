@@ -55,15 +55,14 @@ object CauseListParser {
     ): List<CauseListRecord> {
         val records = mutableListOf<CauseListRecord>()
 
-        // 1. Identify Default Document List Type
-        val defaultListType = when {
+        var defaultListType = when {
             rawText.contains("Correction Application List", ignoreCase = true) -> "Correction"
             rawText.contains("Additional", ignoreCase = true) || rawText.contains("Unlisted", ignoreCase = true) -> "ACL"
             else -> "DCL"
         }
 
-        // 2. Clean out recurring headers, pagination footers, and counsel column labels
-        val cleanedLines = rawText.lines()
+        // Clean out recurring pagination lines
+        val lines = rawText.lines()
             .map { it.trim() }
             .filter { line ->
                 !(line.startsWith("Page ") && line.contains("of")) &&
@@ -75,30 +74,70 @@ object CauseListParser {
                 !line.contains("Respondent Counsel", ignoreCase = true)
             }
 
-        // Universal Case Number Matcher:
-        // Handles: NA528/11656/2026, NA52811656//2026, A482-18661-2018, CRLA/1594/1983, A227/3728/2021
+        // Regex for Case numbers: Handles NA528/11656/2026, NA52811656//2026, A482-18661-2018, CRLA/1594/1983
         val caseRegex = Regex("(?i)\\b([A-Za-z0-9]+)[\\/\\-\\s]*(\\d{1,7})[\\/\\-]+(\\d{4})\\b")
         val correctionAppRegex = Regex("(?i)(\\d+)[\\/\\-](\\d{4}).*?in\\s*case\\s*([A-Za-z0-9]+)[\\-\\s\\/]+(\\d+)[\\-\\s\\/]+(\\d{4})")
-        val connectedWithRegex = Regex("(?i)(\\d+\\.\\d+)?\\s*With\\s+([A-Za-z0-9\\/\\-\\s]+)")
+        val withConnectedRegex = Regex("(?i)^(\\d+\\.\\d+)\\s+With\\s+([A-Za-z0-9]+)[\\/\\-\\s]*(\\d{1,7})[\\/\\-]+(\\d{4})")
 
         val statusFlags = setOf("DF", "PO", "LO", "TU", "LAFP", "WC", "AS", "FRESH")
 
         var idx = 0
-        val totalLines = cleanedLines.size
+        val totalLines = lines.size
 
         while (idx < totalLines) {
-            val line = cleanedLines[idx]
+            val line = lines[idx]
+
+            // Dynamically detect section header shifts
+            if (line.contains("ADDITIONAL", ignoreCase = true)) defaultListType = "ACL"
+            if (line.contains("FRESH LIST", ignoreCase = true) || line.contains("DAILY CAUSE LIST", ignoreCase = true)) defaultListType = "DCL"
+            if (line.contains("Correction Application List", ignoreCase = true)) defaultListType = "Correction"
+
+            // 1. Check for Connected Case line: e.g. "88.1 With NA528/21013/2025"
+            val withMatch = withConnectedRegex.find(line)
+            if (withMatch != null) {
+                val subSerial = withMatch.groupValues[1]
+                val cType = withMatch.groupValues[2].uppercase()
+                val fSerial = withMatch.groupValues[3]
+                val fYear = withMatch.groupValues[4]
+
+                // Scan next 6 lines strictly for Party Name (P1 vs P2)
+                val party = scanPartyName(lines, idx + 1, minOf(idx + 7, totalLines))
+
+                records.add(
+                    CauseListRecord(
+                        causeListDate = date,
+                        courtNo = courtNo,
+                        serialNo = subSerial,
+                        statusTag = "With",
+                        listType = defaultListType,
+                        caseType = cType,
+                        fileSerialNo = fSerial,
+                        fileYear = fYear,
+                        fileNo = "$fSerial/$fYear",
+                        partyName = party
+                    )
+                )
+                idx++
+                continue
+            }
+
+            // 2. Check for Serial Anchor (e.g. "1", "12 DF", "22 PO", "357 WC")
             val tokens = line.split("\\s+".toRegex()).filter { it.isNotBlank() }
             var candidateSerial: String? = null
+            var candidateTag = ""
             var tokenOffset = 0
 
-            // Serial anchors can be anywhere from 1 to 2000+, with or without a status flag prefix
             if (tokens.isNotEmpty()) {
                 val first = tokens[0]
-                if (first.matches(Regex("^\\d+(\\.\\d+)?$")) && !first.contains("/")) {
+                if (first.matches(Regex("^\\d+$")) && !first.contains("/")) {
                     candidateSerial = first
                     tokenOffset = 1
-                } else if (statusFlags.contains(first.uppercase()) && tokens.size > 1 && tokens[1].matches(Regex("^\\d+(\\.\\d+)?$"))) {
+                    if (tokens.size > 1 && statusFlags.contains(tokens[1].uppercase())) {
+                        candidateTag = tokens[1].uppercase()
+                        tokenOffset = 2
+                    }
+                } else if (statusFlags.contains(first.uppercase()) && tokens.size > 1 && tokens[1].matches(Regex("^\\d+$"))) {
+                    candidateTag = first.uppercase()
                     candidateSerial = tokens[1]
                     tokenOffset = 2
                 }
@@ -108,54 +147,55 @@ object CauseListParser {
                 val serial = candidateSerial
                 val blockLines = mutableListOf<String>()
 
-                val remainingLine = tokens.drop(tokenOffset).joinToString(" ").trim()
-                if (remainingLine.isNotBlank()) blockLines.add(remainingLine)
+                val remainder = tokens.drop(tokenOffset).joinToString(" ").trim()
+                if (remainder.isNotBlank()) blockLines.add(remainder)
 
-                // Accumulate all content until the next serial anchor is detected
                 var lookahead = idx + 1
                 while (lookahead < totalLines) {
-                    val nextLine = cleanedLines[lookahead]
+                    val nextLine = lines[lookahead]
                     val nextTokens = nextLine.split("\\s+".toRegex()).filter { it.isNotBlank() }
+
+                    // Stop if encountering next leading serial number or companion case
+                    val isNextWith = withConnectedRegex.containsMatchIn(nextLine)
                     val isNextSerial = nextTokens.isNotEmpty() && (
-                        (nextTokens[0].matches(Regex("^\\d+(\\.\\d+)?$")) && !nextLine.contains("/") && !nextLine.contains("Notice")) ||
-                        (statusFlags.contains(nextTokens[0].uppercase()) && nextTokens.size > 1 && nextTokens[1].matches(Regex("^\\d+(\\.\\d+)?$")))
+                        (nextTokens[0].matches(Regex("^\\d+$")) && !nextLine.contains("/") && !nextLine.contains("Notice")) ||
+                        (statusFlags.contains(nextTokens[0].uppercase()) && nextTokens.size > 1 && nextTokens[1].matches(Regex("^\\d+$")))
                     )
-                    if (isNextSerial) break
+
+                    if (isNextWith || isNextSerial) break
                     blockLines.add(nextLine)
                     lookahead++
                 }
 
                 val blockText = blockLines.joinToString("\n")
 
-                // Mode 1: Correction Application List (e.g. 9/2026 in case A482-18661-2018)
+                // Check for Correction List pattern
                 val corrMatch = correctionAppRegex.find(blockText)
                 if (corrMatch != null) {
                     val appNo = corrMatch.groupValues[1]
                     val appYear = corrMatch.groupValues[2]
-                    val caseType = corrMatch.groupValues[3].uppercase()
-                    val fileSerial = corrMatch.groupValues[4]
-                    val fileYear = corrMatch.groupValues[5]
-
-                    var party = extractPartyFromBlock(blockLines)
-                    if (party.isBlank()) party = "Correction App: $appNo/$appYear"
+                    val cType = corrMatch.groupValues[3].uppercase()
+                    val fSerial = corrMatch.groupValues[4]
+                    val fYear = corrMatch.groupValues[5]
+                    val party = extractCleanParty(blockLines).ifBlank { "Correction App: $appNo/$appYear" }
 
                     records.add(
                         CauseListRecord(
                             causeListDate = date,
                             courtNo = courtNo,
                             serialNo = serial,
+                            statusTag = candidateTag.ifEmpty { "Correction" },
                             listType = "Correction",
-                            caseType = caseType,
-                            fileSerialNo = fileSerial,
-                            fileYear = fileYear,
-                            fileNo = "$fileSerial/$fileYear",
-                            partyName = party.take(250),
-                            connectedCases = ""
+                            caseType = cType,
+                            fileSerialNo = fSerial,
+                            fileYear = fYear,
+                            fileNo = "$fSerial/$fYear",
+                            partyName = party
                         )
                     )
                 } else {
-                    // Mode 2: Standard Daily (DCL) or Additional (ACL) Case
-                    var foundCaseType = ""
+                    // Standard Main Case
+                    var foundType = ""
                     var foundFileSerial = ""
                     var foundFileYear = ""
 
@@ -165,41 +205,33 @@ object CauseListParser {
                             bLine.startsWith("Crime No", ignoreCase = true)
                         ) continue
 
-                        val cMatch = caseRegex.find(bLine)
-                        if (cMatch != null) {
-                            val ct = cMatch.groupValues[1]
+                        val m = caseRegex.find(bLine)
+                        if (m != null) {
+                            val ct = m.groupValues[1]
                             if (ct.length >= 2 && ct.any { it.isLetter() }) {
-                                foundCaseType = ct.uppercase()
-                                foundFileSerial = cMatch.groupValues[2]
-                                foundFileYear = cMatch.groupValues[3]
+                                foundType = ct.uppercase()
+                                foundFileSerial = m.groupValues[2]
+                                foundFileYear = m.groupValues[3]
                                 break
                             }
                         }
                     }
 
                     if (foundFileSerial.isNotBlank() && foundFileYear.isNotBlank()) {
-                        // Extract Connected Cases ("With" companion files)
-                        val connectedList = mutableListOf<String>()
-                        connectedWithRegex.findAll(blockText).forEach { wm ->
-                            val withCase = wm.groupValues[2].trim()
-                            val subSerial = wm.groupValues[1].ifBlank { "" }
-                            connectedList.add(if (subSerial.isNotBlank()) "$subSerial With $withCase" else "With $withCase")
-                        }
-
-                        val party = extractPartyFromBlock(blockLines)
+                        val party = extractCleanParty(blockLines)
 
                         records.add(
                             CauseListRecord(
                                 causeListDate = date,
                                 courtNo = courtNo,
                                 serialNo = serial,
+                                statusTag = candidateTag,
                                 listType = defaultListType,
-                                caseType = foundCaseType,
+                                caseType = foundType,
                                 fileSerialNo = foundFileSerial,
                                 fileYear = foundFileYear,
                                 fileNo = "$foundFileSerial/$foundFileYear",
-                                partyName = party.take(250),
-                                connectedCases = connectedList.joinToString(", ")
+                                partyName = party
                             )
                         )
                     }
@@ -214,23 +246,26 @@ object CauseListParser {
         return records
     }
 
-    private fun extractPartyFromBlock(lines: List<String>): String {
-        // Matches case-insensitive standalone "VS" or "vs"
-        val vsIndex = lines.indexOfFirst { 
-            it.trim().equals("VS", ignoreCase = true) || 
-            it.contains(" VS ", ignoreCase = true) || 
-            it.contains(" vs ", ignoreCase = true) 
+    private fun scanPartyName(lines: List<String>, start: Int, end: Int): String {
+        val sub = lines.subList(start, end)
+        return extractCleanParty(sub)
+    }
+
+    private fun extractCleanParty(lines: List<String>): String {
+        val vsIndex = lines.indexOfFirst {
+            it.trim().equals("VS", ignoreCase = true) ||
+            it.contains(" VS ", ignoreCase = true) ||
+            it.contains(" vs ", ignoreCase = true)
         }
 
         if (vsIndex != -1) {
             val targetLine = lines[vsIndex]
             if (targetLine.equals("VS", ignoreCase = true) || targetLine.equals("vs", ignoreCase = true)) {
-                val p1 = lines.subList(0, vsIndex).filter { isValidPartyLine(it) }.takeLast(2).joinToString(" ").trim()
-                val p2 = lines.subList(vsIndex + 1, lines.size).filter { isValidPartyLine(it) }.take(2).joinToString(" ").trim()
+                val p1 = lines.subList(0, vsIndex).filter { isCleanPartyToken(it) }.takeLast(2).joinToString(" ").trim()
+                val p2 = lines.subList(vsIndex + 1, lines.size).filter { isCleanPartyToken(it) }.take(2).joinToString(" ").trim()
                 return if (p1.isNotBlank()) "$p1 VS $p2" else "VS $p2"
             } else {
-                val splitRegex = Regex("(?i)\\s+vs\\s+")
-                val parts = targetLine.split(splitRegex)
+                val parts = targetLine.split(Regex("(?i)\\s+vs\\s+"))
                 if (parts.size >= 2) {
                     val p1 = parts[0].trim()
                     val p2 = parts[1].trim()
@@ -241,13 +276,14 @@ object CauseListParser {
         return ""
     }
 
-    private fun isValidPartyLine(line: String): Boolean {
+    private fun isCleanPartyToken(line: String): Boolean {
         val l = line.trim().lowercase()
         if (l.isBlank()) return false
         if (l.startsWith("notice no") || l.startsWith("tc no") || l.startsWith("crime no")) return false
         if (l.startsWith("in case") || l.startsWith("case decided")) return false
         if (l.startsWith("details of cases") || l.startsWith("-details")) return false
         if (l.contains("advocate") || l.contains("g.a.") || l.contains("a.g.a.")) return false
+        if (l.contains("police st.") || l.contains("district-")) return false
         return true
     }
 }
