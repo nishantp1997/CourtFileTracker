@@ -1620,13 +1620,13 @@ fun CaseCardWithMeta(
 }
 
 /**
- * Dedicated In-App Cause List Case Status Portal with Verified Judgment Stream Interception
+ * In-App Cause List Case Status Portal with Direct WebDownloadOrderSheet.do Stream Interception
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     var webView: WebView? by remember { mutableStateOf(null) }
-    var activePdfUrl by remember { mutableStateOf<String?>(null) }
+    var activePdfBytes by remember { mutableStateOf<ByteArray?>(null) }
     var isLoading by remember { mutableStateOf(false) }
 
     var isSearchActive by remember { mutableStateOf(false) }
@@ -1635,6 +1635,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     var totalMatches by remember { mutableStateOf(0) }
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     BackHandler {
         if (isSearchActive) {
@@ -1762,6 +1763,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             totalMatches = matchCount
                         }
 
+                        // Intercept target="_blank" window creations
                         webChromeClient = object : WebChromeClient() {
                             override fun onCreateWindow(
                                 view: WebView?,
@@ -1774,7 +1776,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                                 popupWebView.webViewClient = object : WebViewClient() {
                                     override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
                                         val url = request?.url?.toString() ?: return false
-                                        activePdfUrl = url
+                                        view?.loadUrl(url)
                                         return true
                                     }
                                 }
@@ -1788,20 +1790,68 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) { isLoading = true }
                             override fun onPageFinished(view: WebView?, url: String?) { isLoading = false }
-                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                val url = request?.url?.toString() ?: return false
+
+                            // Intercept the WebDownloadOrderSheet.do response directly
+                            override fun shouldInterceptRequest(
+                                view: WebView?,
+                                request: WebResourceRequest?
+                            ): WebResourceResponse? {
+                                val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
                                 val lower = url.lowercase()
-                                if (lower.endsWith(".pdf") || lower.contains(".pdf?") || lower.contains("display_pdf") || lower.contains("get_order") || lower.contains("download_order")) {
-                                    activePdfUrl = url
-                                    return true
+
+                                if (lower.contains("webdownloadordersheet.do") || lower.endsWith(".pdf") || lower.contains(".pdf?")) {
+                                    try {
+                                        val conn = URL(url).openConnection() as HttpURLConnection
+                                        conn.requestMethod = request.method
+                                        conn.connectTimeout = 20000
+                                        conn.readTimeout = 20000
+
+                                        val cookie = CookieManager.getInstance().getCookie(url)
+                                        if (!cookie.isNullOrBlank()) conn.setRequestProperty("Cookie", cookie)
+
+                                        conn.setRequestProperty(
+                                            "User-Agent",
+                                            "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36"
+                                        )
+
+                                        val contentType = conn.contentType ?: ""
+                                        if (contentType.contains("application/pdf", ignoreCase = true) || lower.endsWith(".pdf")) {
+                                            val bytes = conn.inputStream.readBytes()
+                                            if (bytes.size > 200 && bytes[0] == 0x25.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x44.toByte() && bytes[3] == 0x46.toByte()) { // %PDF
+                                                scope.launch(Dispatchers.Main) {
+                                                    activePdfBytes = bytes
+                                                }
+                                                return WebResourceResponse("application/pdf", "UTF-8", bytes.inputStream())
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    }
                                 }
-                                return false
+                                return super.shouldInterceptRequest(view, request)
                             }
                         }
 
+                        // Also catch binary streams routed through download listener
                         setDownloadListener { url, _, _, mimeType, _ ->
-                            if (url.contains("pdf", ignoreCase = true) || mimeType.equals("application/pdf", ignoreCase = true)) {
-                                activePdfUrl = url
+                            scope.launch(Dispatchers.IO) {
+                                try {
+                                    val conn = URL(url).openConnection() as HttpURLConnection
+                                    val cookie = CookieManager.getInstance().getCookie(url)
+                                    if (!cookie.isNullOrBlank()) conn.setRequestProperty("Cookie", cookie)
+                                    conn.setRequestProperty(
+                                        "User-Agent",
+                                        "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36"
+                                    )
+                                    val bytes = conn.inputStream.readBytes()
+                                    if (bytes.isNotEmpty()) {
+                                        withContext(Dispatchers.Main) {
+                                            activePdfBytes = bytes
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
                             }
                         }
 
@@ -1812,10 +1862,9 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             )
 
+            // Scroll Buttons
             Column(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 SmallFloatingActionButton(
@@ -1849,67 +1898,45 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 }
             }
 
-            activePdfUrl?.let { url ->
-                EphemeralPdfViewerDialog(pdfUrl = url, onDismiss = { activePdfUrl = null })
+            activePdfBytes?.let { bytes ->
+                EphemeralBytePdfViewerDialog(pdfBytes = bytes, onDismiss = { activePdfBytes = null })
             }
         }
     }
 }
 
 /**
- * Ephemeral In-Memory PDF Dialog with Native Renderer & System Intent Fallback
+ * Ephemeral In-Memory PDF Dialog that directly renders in-memory byte arrays
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
+fun EphemeralBytePdfViewerDialog(pdfBytes: ByteArray, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var isLoading by remember { mutableStateOf(true) }
     var pageBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
-    var tempPdfFile by remember { mutableStateOf<File?>(null) }
+    var tempFile by remember { mutableStateOf<File?>(null) }
 
-    fun cleanupFile() {
-        tempPdfFile?.let { if (it.exists()) it.delete() }
+    fun cleanup() {
+        tempFile?.let { if (it.exists()) it.delete() }
     }
 
     DisposableEffect(Unit) {
-        onDispose { cleanupFile() }
+        onDispose { cleanup() }
     }
 
     BackHandler {
-        cleanupFile()
+        cleanup()
         onDismiss()
     }
 
-    LaunchedEffect(pdfUrl) {
+    LaunchedEffect(pdfBytes) {
         scope.launch(Dispatchers.IO) {
             try {
                 val dir = File(context.cacheDir, "ephemeral_pdfs").apply { if (!exists()) mkdirs() }
                 val target = File(dir, "judgment_${System.currentTimeMillis()}.pdf")
-                tempPdfFile = target
-
-                val conn = URL(pdfUrl).openConnection() as HttpURLConnection
-                conn.connectTimeout = 20000
-                conn.readTimeout = 20000
-
-                val cookies = CookieManager.getInstance().getCookie(pdfUrl)
-                if (!cookies.isNullOrBlank()) {
-                    conn.setRequestProperty("Cookie", cookies)
-                }
-                conn.setRequestProperty(
-                    "User-Agent",
-                    "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36"
-                )
-                conn.setRequestProperty("Accept", "application/pdf,*/*")
-                conn.instanceFollowRedirects = true
-
-                conn.inputStream.use { input ->
-                    FileOutputStream(target).use { output -> input.copyTo(output) }
-                }
-
-                if (!target.exists() || target.length() < 100) {
-                    throw IllegalStateException("Empty response received.")
-                }
+                tempFile = target
+                target.writeBytes(pdfBytes)
 
                 try {
                     val pfd = ParcelFileDescriptor.open(target, ParcelFileDescriptor.MODE_READ_ONLY)
@@ -1929,8 +1956,8 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
                         pageBitmaps = bitmaps
                         isLoading = false
                     }
-                } catch (renderError: Exception) {
-                    // Fallback to system external PDF Viewer
+                } catch (e: Exception) {
+                    // Fallback to System PDF Viewer
                     withContext(Dispatchers.Main) {
                         try {
                             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", target)
@@ -1940,16 +1967,16 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
                             }
                             context.startActivity(Intent.createChooser(intent, "Open Judgment With:"))
                             onDismiss()
-                        } catch (e: Exception) {
-                            Toast.makeText(context, "Could not open document viewer.", Toast.LENGTH_SHORT).show()
+                        } catch (err: Exception) {
+                            Toast.makeText(context, "Cannot open PDF viewer: ${err.localizedMessage}", Toast.LENGTH_SHORT).show()
                             onDismiss()
                         }
                     }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Download Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                    cleanupFile()
+                    Toast.makeText(context, "Error reading document: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    cleanup()
                     onDismiss()
                 }
             }
@@ -1957,7 +1984,7 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
     }
 
     Dialog(
-        onDismissRequest = { cleanupFile(); onDismiss() },
+        onDismissRequest = { cleanup(); onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Scaffold(
@@ -1965,7 +1992,7 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
                 TopAppBar(
                     title = { Text("Judgment / Order Preview") },
                     navigationIcon = {
-                        IconButton(onClick = { cleanupFile(); onDismiss() }) {
+                        IconButton(onClick = { cleanup(); onDismiss() }) {
                             Icon(Icons.Default.Close, contentDescription = "Close")
                         }
                     }
@@ -1983,7 +2010,7 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator()
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("Fetching authenticated judgment PDF...", fontSize = 12.sp)
+                        Text("Rendering Judgment Order Sheet...", fontSize = 12.sp)
                     }
                 } else {
                     LazyColumn(
@@ -2005,273 +2032,4 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
             }
         }
     }
-}
-
-/**
- * Add Cause List In-App Web View with Detection Confirmation
- */
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-fun CauseListIngestionWebView(courtNo: String, date: String, causeListDao: CauseListDao, onClose: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var pendingPdfUrl by remember { mutableStateOf<String?>(null) }
-    var isParsing by remember { mutableStateOf(false) }
-    var webView: WebView? by remember { mutableStateOf(null) }
-
-    BackHandler {
-        if (webView?.canGoBack() == true) webView?.goBack() else onClose()
-    }
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Court $courtNo | Date: $date", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Button(onClick = onClose) { Text("Exit Portal", fontSize = 12.sp) }
-        }
-
-        if (isParsing) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            Text("Parsing Cause List PDF locally into SQLite...", fontSize = 11.sp, modifier = Modifier.padding(vertical = 4.dp))
-        }
-
-        AndroidView(
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                    settings.apply {
-                        javaScriptEnabled = true
-                        domStorageEnabled = true
-                        builtInZoomControls = true
-                        displayZoomControls = false
-                    }
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                            val url = request?.url?.toString() ?: return false
-                            if (url.endsWith(".pdf", ignoreCase = true) || url.contains(".pdf?", ignoreCase = true)) {
-                                pendingPdfUrl = url
-                                return true
-                            }
-                            return false
-                        }
-                    }
-                    setDownloadListener { url, _, _, _, _ ->
-                        if (url.contains("pdf", ignoreCase = true)) pendingPdfUrl = url
-                    }
-                    loadUrl("https://www.allahabadhighcourt.in/causelist/")
-                    webView = this
-                }
-            },
-            modifier = Modifier.fillMaxSize().weight(1f)
-        )
-    }
-
-    pendingPdfUrl?.let { url ->
-        AlertDialog(
-            onDismissRequest = { pendingPdfUrl = null },
-            title = { Text("Do You Wish to add this PDF?") },
-            text = { Text("Parse all serial numbers, status tags, case numbers, and party names for Court $courtNo on $date?", fontSize = 12.sp) },
-            confirmButton = {
-                Button(onClick = {
-                    val pdfToParse = url
-                    pendingPdfUrl = null
-                    isParsing = true
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            val conn = URL(pdfToParse).openConnection() as HttpURLConnection
-                            conn.connectTimeout = 15000
-                            conn.readTimeout = 15000
-                            val stream = conn.inputStream
-                            val parsedCases = CauseListParser.parseCauseListPdf(stream, courtNo, date)
-                            stream.close()
-
-                            if (parsedCases.isNotEmpty()) {
-                                causeListDao.insertAll(parsedCases)
-                                withContext(Dispatchers.Main) {
-                                    isParsing = false
-                                    Toast.makeText(context, "Imported ${parsedCases.size} Cases for Court $courtNo!", Toast.LENGTH_LONG).show()
-                                }
-                            } else {
-                                withContext(Dispatchers.Main) {
-                                    isParsing = false
-                                    Toast.makeText(context, "No cases extracted from PDF!", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                isParsing = false
-                                Toast.makeText(context, "Parse Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    }
-                }) { Text("Yes") }
-            },
-            dismissButton = { TextButton(onClick = { pendingPdfUrl = null }) { Text("No") } }
-        )
-    }
-}
-
-/**
- * Add Case Meta-Data Attachment Dialog
- * - No default selection: User must explicitly choose an option
- */
-@Composable
-fun AddCaseMetaDataDialog(
-    record: FileRecord,
-    onDismiss: () -> Unit,
-    onSave: (FileRecord) -> Unit
-) {
-    var metaType by remember { mutableStateOf("REPORT") } // "REPORT" or "APPLICATION"
-    
-    // Default to empty string so nothing is pre-selected
-    var selectedReportOption by remember { mutableStateOf("") }
-    var customReportText by remember { mutableStateOf("") }
-    var reportDateInput by remember { mutableStateOf("") }
-    
-    var appNoInput by remember { mutableStateOf("") }
-    var appYearInput by remember { mutableStateOf("2026") }
-
-    val reportOptions = listOf(
-        "Notice: Served",
-        "Notice: Unserved",
-        "Compromise: Done",
-        "Compromise: Not Done",
-        "Mediation Report",
-        "Other Report"
-    )
-
-    // Validation check before enabling Save button
-    val isReportValid = if (selectedReportOption == "Other Report") {
-        customReportText.isNotBlank()
-    } else {
-        selectedReportOption.isNotBlank()
-    }
-
-    val isAppValid = appNoInput.isNotBlank() && appYearInput.isNotBlank()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add Case Meta-Data: ${record.fileNo}", fontSize = 15.sp) },
-        text = {
-            Column {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceAround
-                ) {
-                    FilterChip(
-                        selected = metaType == "REPORT",
-                        onClick = { metaType = "REPORT" },
-                        label = { Text("Keep Report") }
-                    )
-                    FilterChip(
-                        selected = metaType == "APPLICATION",
-                        onClick = { metaType = "APPLICATION" },
-                        label = { Text("Add Application") }
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if (metaType == "REPORT") {
-                    var dropdownExpanded by remember { mutableStateOf(false) }
-                    Box(modifier = Modifier.fillMaxWidth()) {
-                        OutlinedTextField(
-                            value = selectedReportOption.ifEmpty { "Choose Report Type..." },
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Select Report Type *") },
-                            trailingIcon = {
-                                IconButton(onClick = { dropdownExpanded = true }) {
-                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        DropdownMenu(
-                            expanded = dropdownExpanded,
-                            onDismissRequest = { dropdownExpanded = false }
-                        ) {
-                            reportOptions.forEach { opt ->
-                                DropdownMenuItem(
-                                    text = { Text(opt) },
-                                    onClick = {
-                                        selectedReportOption = opt
-                                        dropdownExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    if (selectedReportOption == "Other Report") {
-                        OutlinedTextField(
-                            value = customReportText,
-                            onValueChange = { customReportText = it },
-                            label = { Text("Specify Report Description *") },
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                        )
-                    }
-
-                    OutlinedTextField(
-                        value = reportDateInput,
-                        onValueChange = { reportDateInput = it },
-                        label = { Text("Report Date (Optional, e.g. 21-09-26)") },
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                    )
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = appNoInput,
-                            onValueChange = { appNoInput = it },
-                            label = { Text("App No (e.g. 9)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = appYearInput,
-                            onValueChange = { appYearInput = it },
-                            label = { Text("Year (e.g. 2026)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Text(
-                        "Format: [App No]/[Year]",
-                        fontSize = 11.sp,
-                        color = Color.Gray,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                enabled = (metaType == "REPORT" && isReportValid) || (metaType == "APPLICATION" && isAppValid),
-                onClick = {
-                    val currentDate = SimpleDateFormat("dd-MM-yy", Locale.getDefault()).format(Date())
-                    if (metaType == "REPORT") {
-                        val label = if (selectedReportOption == "Other Report") customReportText.trim() else selectedReportOption
-                        val suffix = if (reportDateInput.isNotBlank()) " (Date: ${reportDateInput.trim()})" else ""
-                        val str = "$label$suffix"
-                        val updatedReports = if (record.reportsOnRecord.isBlank()) str else "${record.reportsOnRecord}\n$str"
-                        val log = "${record.historyLog}\n[$currentDate] Placed on Record -> $str"
-                        onSave(record.copy(reportsOnRecord = updatedReports, historyLog = log))
-                    } else {
-                        val app = "${appNoInput.trim()}/${appYearInput.trim()}"
-                        val updatedApps = if (record.applicationsOnRecord.isBlank()) app else "${record.applicationsOnRecord}, $app"
-                        val log = "${record.historyLog}\n[$currentDate] Application Tagged -> $app"
-                        onSave(record.copy(applicationsOnRecord = updatedApps, historyLog = log))
-                    }
-                }
-            ) {
-                Text("Save Meta-Data")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
 }
