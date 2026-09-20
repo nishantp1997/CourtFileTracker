@@ -1626,8 +1626,7 @@ fun CaseCardWithMeta(
 
 /**
  * In-App Cause List Case Status Portal
- * Renders all pages and form submissions (including post-captcha WebDownloadOrderSheet.do)
- * directly in the WebView as-is.
+ * Handles cross-origin POST submissions and JavaScript alerts for WebDownloadOrderSheet.do
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -1639,6 +1638,8 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     var searchQuery by remember { mutableStateOf("") }
     var activeMatchIndex by remember { mutableStateOf(0) }
     var totalMatches by remember { mutableStateOf(0) }
+
+    val context = LocalContext.current
 
     BackHandler {
         if (isSearchActive) {
@@ -1652,43 +1653,68 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        // Top Action Bar
+        Surface(
+            tonalElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(onClick = { if (webView?.canGoBack() == true) webView?.goBack() else onNavigateBack() }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Back", fontSize = 12.sp)
-                }
-                OutlinedButton(onClick = { webView?.reload() }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Reload", modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Reload", fontSize = 12.sp)
-                }
-                IconButton(onClick = {
-                    isSearchActive = !isSearchActive
-                    if (!isSearchActive) {
-                        webView?.clearMatches()
-                        searchQuery = ""
-                        totalMatches = 0
-                        activeMatchIndex = 0
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(
+                        onClick = { if (webView?.canGoBack() == true) webView?.goBack() else onNavigateBack() },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Back", fontSize = 12.sp)
                     }
-                }) {
-                    Icon(Icons.Default.Search, contentDescription = "Find in page")
+                    OutlinedButton(
+                        onClick = { webView?.reload() },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Reload", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Reload", fontSize = 12.sp)
+                    }
+                    IconButton(onClick = {
+                        isSearchActive = !isSearchActive
+                        if (!isSearchActive) {
+                            webView?.clearMatches()
+                            searchQuery = ""
+                            totalMatches = 0
+                            activeMatchIndex = 0
+                        }
+                    }) {
+                        Icon(Icons.Default.Search, contentDescription = "Find in page")
+                    }
+                }
+                OutlinedButton(
+                    onClick = onNavigateBack,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text("Exit Portal", fontSize = 12.sp)
                 }
             }
-            OutlinedButton(onClick = onNavigateBack) { Text("Exit Portal", fontSize = 12.sp) }
         }
 
+        // In-page search bar
         if (isSearchActive) {
-            Card(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), elevation = CardDefaults.cardElevation(4.dp)) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                elevation = CardDefaults.cardElevation(4.dp)
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
@@ -1737,7 +1763,10 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
 
                         isVerticalScrollBarEnabled = true
                         isHorizontalScrollBarEnabled = true
@@ -1752,14 +1781,18 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                         settings.apply {
                             javaScriptEnabled = true
                             domStorageEnabled = true
+                            databaseEnabled = true
                             useWideViewPort = true
                             loadWithOverviewMode = true
                             builtInZoomControls = true
                             displayZoomControls = false
                             setSupportZoom(true)
                             javaScriptCanOpenWindowsAutomatically = true
-                            // Force all window.open / target="_blank" to stay within this same view
-                            setSupportMultipleWindows(false)
+                            // Let the custom WebChromeClient handle target="_blank" window redirection
+                            setSupportMultipleWindows(true)
+                            // Allow legacy assets and mixed cross-origin resources from elegalix
+                            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            userAgentString = "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
                         }
 
                         setFindListener { activeIndex, matchCount, _ ->
@@ -1767,7 +1800,50 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             totalMatches = matchCount
                         }
 
-                        webChromeClient = WebChromeClient()
+                        // Essential: Display alerts and allow new tabs to redirect right back into this view
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onJsAlert(
+                                view: WebView?,
+                                url: String?,
+                                message: String?,
+                                result: JsResult?
+                            ): Boolean {
+                                Toast.makeText(ctx, message ?: "Alert", Toast.LENGTH_SHORT).show()
+                                result?.confirm()
+                                return true
+                            }
+
+                            override fun onJsConfirm(
+                                view: WebView?,
+                                url: String?,
+                                message: String?,
+                                result: JsResult?
+                            ): Boolean {
+                                result?.confirm()
+                                return true
+                            }
+
+                            override fun onCreateWindow(
+                                view: WebView?,
+                                isDialog: Boolean,
+                                isUserGesture: Boolean,
+                                resultMsg: android.os.Message?
+                            ): Boolean {
+                                // Capture target="_blank" form submits and navigate this same WebView
+                                val tempWebView = WebView(ctx)
+                                tempWebView.webViewClient = object : WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
+                                        val targetUrl = request?.url?.toString() ?: return false
+                                        view?.loadUrl(targetUrl)
+                                        return true
+                                    }
+                                }
+                                val transport = resultMsg?.obj as? WebView.WebViewTransport
+                                transport?.webView = tempWebView
+                                resultMsg?.sendToTarget()
+                                return true
+                            }
+                        }
 
                         webViewClient = object : WebViewClient() {
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -1776,26 +1852,40 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 isLoading = false
-                                // Ensure any target="_blank" forms (like captcha submit) submit inside this same view
+                                // Strip any target="_blank" attributes directly on the DOM
                                 view?.evaluateJavascript(
                                     """
                                     (function() {
-                                        var forms = document.getElementsByTagName('form');
-                                        for (var i = 0; i < forms.length; i++) {
-                                            forms[i].setAttribute('target', '_self');
-                                        }
-                                        var links = document.getElementsByTagName('a');
-                                        for (var j = 0; j < links.length; j++) {
-                                            links[j].setAttribute('target', '_self');
-                                        }
+                                        try {
+                                            var forms = document.querySelectorAll('form');
+                                            for (var i = 0; i < forms.length; i++) {
+                                                forms[i].removeAttribute('target');
+                                                forms[i].setAttribute('target', '_self');
+                                            }
+                                            var links = document.querySelectorAll('a[target="_blank"]');
+                                            for (var j = 0; j < links.length; j++) {
+                                                links[j].removeAttribute('target');
+                                                links[j].setAttribute('target', '_self');
+                                            }
+                                        } catch (e) {}
                                     })();
                                     """.trimIndent(), null
                                 )
                             }
 
-                            // Keep all navigations within this WebView
+                            override fun onReceivedSslError(
+                                view: WebView?,
+                                handler: SslErrorHandler?,
+                                error: android.net.http.SslError?
+                            ) {
+                                // Ensure SSL handshake between allahabadhighcourt.in and elegalix completes
+                                handler?.proceed()
+                            }
+
                             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                return false
+                                val destUrl = request?.url?.toString() ?: return false
+                                view?.loadUrl(destUrl)
+                                return true
                             }
                         }
 
@@ -1806,9 +1896,11 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Pan and Scroll Navigation Controls
+            // Pan and scroll action buttons
             Column(
-                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 SmallFloatingActionButton(
