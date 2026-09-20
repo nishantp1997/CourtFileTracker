@@ -12,8 +12,8 @@ android {
         applicationId = "com.court.filetracker"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildFeatures {
@@ -96,6 +96,6 @@ dependencies {
 // iText 7 Core PDF Engine for Reading/Parsing Master Ledger PDFs
     implementation("com.itextpdf:itext7-core:7.2.5")
 
-
-
+// Google Gson (Fast WhatsApp JSON Backup/Restore)
+    implementation("com.google.code.gson:gson:2.10.1")
 }
