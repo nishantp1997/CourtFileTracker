@@ -95,19 +95,13 @@ fun normalizeSearchQuery(input: String): String = input.trim()
 fun stripLeadingZeros(input: String): String = input.trim().trimStart('0').ifEmpty { "0" }
 
 /**
- * Multi-Date Historical Dispatch Tracking Engine
- * Accurately parses all dispatch events for a target date out of the file's historyLog,
- * cross-checks dispatchDatesCsv, and checks active dispatchDate.
- * Ensures a file dispatched multiple times across different dates appears on every date it was sent.
+ * True Historical Multi-Date Dispatch Tracking Engine
+ * Scans the immutable audit log for dispatch events matching [targetDate].
+ * Even if a file's current status is "Not Sent to Court" or moved elsewhere today,
+ * if it was dispatched on targetDate, it will correctly appear.
  */
 fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<String> {
     val courtsFound = mutableSetOf<String>()
-
-    val nonDispatchStatuses = setOf("Unassigned", "Not Sent to Court", "Entry Deleted", "Cause List Identified")
-    if (nonDispatchStatuses.contains(record.status) && (record.courtNo == "N/A" || record.courtNo.isBlank())) {
-        return emptySet()
-    }
-
     val targetTag = "[$targetDate]"
     val logLines = record.historyLog.split("\n")
 
@@ -127,22 +121,11 @@ fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<Stri
         }
     }
 
-    if (record.dispatchDate == targetDate &&
-        record.courtNo != "N/A" &&
-        record.courtNo.isNotBlank() &&
-        record.status != "Unassigned" &&
-        record.status != "Not Sent to Court" &&
-        record.status != "Entry Deleted"
-    ) {
-        courtsFound.add(stripLeadingZeros(record.courtNo))
-    }
-
-    if (record.dispatchDatesCsv.split(",").map { it.trim() }.contains(targetDate) &&
-        record.courtNo != "N/A" &&
-        record.courtNo.isNotBlank() &&
-        record.status != "Unassigned"
-    ) {
-        courtsFound.add(stripLeadingZeros(record.courtNo))
+    // Fallback check against dispatchDatesCsv if logged dates exist
+    if (courtsFound.isEmpty() && record.dispatchDatesCsv.split(",").map { it.trim() }.contains(targetDate)) {
+        if (record.courtNo != "N/A" && record.courtNo.isNotBlank()) {
+            courtsFound.add(stripLeadingZeros(record.courtNo))
+        }
     }
 
     return courtsFound
