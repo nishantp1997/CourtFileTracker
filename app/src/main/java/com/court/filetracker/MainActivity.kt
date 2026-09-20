@@ -1620,22 +1620,20 @@ fun CaseCardWithMeta(
 }
 
 /**
- * In-App Cause List Case Status Portal with Direct WebDownloadOrderSheet.do Stream Interception
+ * In-App Cause List Case Status Portal
+ * Renders all pages and form submissions (including post-captcha WebDownloadOrderSheet.do)
+ * directly in the WebView as-is.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     var webView: WebView? by remember { mutableStateOf(null) }
-    var activePdfBytes by remember { mutableStateOf<ByteArray?>(null) }
     var isLoading by remember { mutableStateOf(false) }
 
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var activeMatchIndex by remember { mutableStateOf(0) }
     var totalMatches by remember { mutableStateOf(0) }
-
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     BackHandler {
         if (isSearchActive) {
@@ -1755,7 +1753,8 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             displayZoomControls = false
                             setSupportZoom(true)
                             javaScriptCanOpenWindowsAutomatically = true
-                            setSupportMultipleWindows(true)
+                            // Force all window.open / target="_blank" to stay within this same view
+                            setSupportMultipleWindows(false)
                         }
 
                         setFindListener { activeIndex, matchCount, _ ->
@@ -1763,95 +1762,35 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             totalMatches = matchCount
                         }
 
-                        // Intercept target="_blank" window creations
-                        webChromeClient = object : WebChromeClient() {
-                            override fun onCreateWindow(
-                                view: WebView?,
-                                isDialog: Boolean,
-                                isUserGesture: Boolean,
-                                resultMsg: android.os.Message?
-                            ): Boolean {
-                                val popupWebView = WebView(ctx)
-                                popupWebView.settings.javaScriptEnabled = true
-                                popupWebView.webViewClient = object : WebViewClient() {
-                                    override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
-                                        val url = request?.url?.toString() ?: return false
-                                        view?.loadUrl(url)
-                                        return true
-                                    }
-                                }
-                                val transport = resultMsg?.obj as? WebView.WebViewTransport
-                                transport?.webView = popupWebView
-                                resultMsg?.sendToTarget()
-                                return true
-                            }
-                        }
+                        webChromeClient = WebChromeClient()
 
                         webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) { isLoading = true }
-                            override fun onPageFinished(view: WebView?, url: String?) { isLoading = false }
-
-                            // Intercept the WebDownloadOrderSheet.do response directly
-                            override fun shouldInterceptRequest(
-                                view: WebView?,
-                                request: WebResourceRequest?
-                            ): WebResourceResponse? {
-                                val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
-                                val lower = url.lowercase()
-
-                                if (lower.contains("webdownloadordersheet.do") || lower.endsWith(".pdf") || lower.contains(".pdf?")) {
-                                    try {
-                                        val conn = URL(url).openConnection() as HttpURLConnection
-                                        conn.requestMethod = request.method
-                                        conn.connectTimeout = 20000
-                                        conn.readTimeout = 20000
-
-                                        val cookie = CookieManager.getInstance().getCookie(url)
-                                        if (!cookie.isNullOrBlank()) conn.setRequestProperty("Cookie", cookie)
-
-                                        conn.setRequestProperty(
-                                            "User-Agent",
-                                            "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36"
-                                        )
-
-                                        val contentType = conn.contentType ?: ""
-                                        if (contentType.contains("application/pdf", ignoreCase = true) || lower.endsWith(".pdf")) {
-                                            val bytes = conn.inputStream.readBytes()
-                                            if (bytes.size > 200 && bytes[0] == 0x25.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x44.toByte() && bytes[3] == 0x46.toByte()) { // %PDF
-                                                scope.launch(Dispatchers.Main) {
-                                                    activePdfBytes = bytes
-                                                }
-                                                return WebResourceResponse("application/pdf", "UTF-8", bytes.inputStream())
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                    }
-                                }
-                                return super.shouldInterceptRequest(view, request)
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                isLoading = true
                             }
-                        }
 
-                        // Also catch binary streams routed through download listener
-                        setDownloadListener { url, _, _, mimeType, _ ->
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    val conn = URL(url).openConnection() as HttpURLConnection
-                                    val cookie = CookieManager.getInstance().getCookie(url)
-                                    if (!cookie.isNullOrBlank()) conn.setRequestProperty("Cookie", cookie)
-                                    conn.setRequestProperty(
-                                        "User-Agent",
-                                        "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36"
-                                    )
-                                    val bytes = conn.inputStream.readBytes()
-                                    if (bytes.isNotEmpty()) {
-                                        withContext(Dispatchers.Main) {
-                                            activePdfBytes = bytes
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                isLoading = false
+                                // Ensure any target="_blank" forms (like captcha submit) submit inside this same view
+                                view?.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        var forms = document.getElementsByTagName('form');
+                                        for (var i = 0; i < forms.length; i++) {
+                                            forms[i].setAttribute('target', '_self');
                                         }
-                                    }
-                                } catch (e: Exception) {
-                                    e.printStackTrace()
-                                }
+                                        var links = document.getElementsByTagName('a');
+                                        for (var j = 0; j < links.length; j++) {
+                                            links[j].setAttribute('target', '_self');
+                                        }
+                                    })();
+                                    """.trimIndent(), null
+                                )
+                            }
+
+                            // Keep all navigations within this WebView
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                return false
                             }
                         }
 
@@ -1862,7 +1801,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Scroll Buttons
+            // Pan and Scroll Navigation Controls
             Column(
                 modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -1897,142 +1836,10 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bottom", modifier = Modifier.size(18.dp))
                 }
             }
-
-            activePdfBytes?.let { bytes ->
-                EphemeralBytePdfViewerDialog(pdfBytes = bytes, onDismiss = { activePdfBytes = null })
-            }
         }
     }
 }
 
-/**
- * Ephemeral In-Memory PDF Dialog that directly renders in-memory byte arrays
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun EphemeralBytePdfViewerDialog(pdfBytes: ByteArray, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var isLoading by remember { mutableStateOf(true) }
-    var pageBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
-    var tempFile by remember { mutableStateOf<File?>(null) }
-
-    fun cleanup() {
-        tempFile?.let { if (it.exists()) it.delete() }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose { cleanup() }
-    }
-
-    BackHandler {
-        cleanup()
-        onDismiss()
-    }
-
-    LaunchedEffect(pdfBytes) {
-        scope.launch(Dispatchers.IO) {
-            try {
-                val dir = File(context.cacheDir, "ephemeral_pdfs").apply { if (!exists()) mkdirs() }
-                val target = File(dir, "judgment_${System.currentTimeMillis()}.pdf")
-                tempFile = target
-                target.writeBytes(pdfBytes)
-
-                try {
-                    val pfd = ParcelFileDescriptor.open(target, ParcelFileDescriptor.MODE_READ_ONLY)
-                    val renderer = PdfRenderer(pfd)
-                    val bitmaps = mutableListOf<Bitmap>()
-                    for (i in 0 until renderer.pageCount) {
-                        val page = renderer.openPage(i)
-                        val bmp = Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888)
-                        page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                        bitmaps.add(bmp)
-                        page.close()
-                    }
-                    renderer.close()
-                    pfd.close()
-
-                    withContext(Dispatchers.Main) {
-                        pageBitmaps = bitmaps
-                        isLoading = false
-                    }
-                } catch (e: Exception) {
-                    // Fallback to System PDF Viewer
-                    withContext(Dispatchers.Main) {
-                        try {
-                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", target)
-                            val intent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, "application/pdf")
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(Intent.createChooser(intent, "Open Judgment With:"))
-                            onDismiss()
-                        } catch (err: Exception) {
-                            Toast.makeText(context, "Cannot open PDF viewer: ${err.localizedMessage}", Toast.LENGTH_SHORT).show()
-                            onDismiss()
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Error reading document: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                    cleanup()
-                    onDismiss()
-                }
-            }
-        }
-    }
-
-    Dialog(
-        onDismissRequest = { cleanup(); onDismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Judgment / Order Preview") },
-                    navigationIcon = {
-                        IconButton(onClick = { cleanup(); onDismiss() }) {
-                            Icon(Icons.Default.Close, contentDescription = "Close")
-                        }
-                    }
-                )
-            }
-        ) { padding ->
-            Box(
-                modifier = Modifier
-                    .padding(padding)
-                    .fillMaxSize()
-                    .background(Color(0xFFE0E0E0)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (isLoading) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Rendering Judgment Order Sheet...", fontSize = 12.sp)
-                    }
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        itemsIndexed(pageBitmaps) { _, bmp ->
-                            Card(modifier = Modifier.fillMaxWidth()) {
-                                Image(
-                                    bitmap = bmp.asImageBitmap(),
-                                    contentDescription = null,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
 
 /**
  * In-App Web View for "Add Cause List From Web":
