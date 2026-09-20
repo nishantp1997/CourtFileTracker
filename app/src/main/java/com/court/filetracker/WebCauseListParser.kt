@@ -23,7 +23,7 @@ object WebCauseListParser {
 
         // 2. Identify default cause list category
         var currentListType = when {
-            htmlContent.contains("Correction Application List", ignoreCase = true) -> "Correction"[cite: 4, 5]
+            htmlContent.contains("Correction Application List", ignoreCase = true) -> "Correction"
             htmlContent.contains("Additional", ignoreCase = true) || htmlContent.contains("Unlisted", ignoreCase = true) -> "ACL"
             else -> "DCL"
         }
@@ -39,11 +39,11 @@ object WebCauseListParser {
             // Detect embedded sub-headers within the table
             if (row.select("th[colspan], td[colspan]").isNotEmpty()) {
                 if (text.contains("Correction Application List", ignoreCase = true)) {
-                    currentListType = "Correction"[cite: 5]
+                    currentListType = "Correction"
                 } else if (text.contains("Additional", ignoreCase = true) || text.contains("Unlisted", ignoreCase = true)) {
                     currentListType = "ACL"
                 } else if (text.contains("Combined Cause List", ignoreCase = true) || text.contains("Fresh List", ignoreCase = true)) {
-                    currentListType = "DCL"[cite: 4]
+                    currentListType = "DCL"
                 }
             }
 
@@ -51,7 +51,7 @@ object WebCauseListParser {
             if (row.select("p.text-dark").isNotEmpty() || 
                 text.startsWith("TC No", ignoreCase = true) || 
                 text.startsWith("Crime No", ignoreCase = true) ||
-                text.startsWith("Details of Cases", ignoreCase = true)[cite: 4, 5]
+                text.startsWith("Details of Cases", ignoreCase = true)
             ) {
                 continue
             }
@@ -105,15 +105,15 @@ object WebCauseListParser {
                 lastMainSerial = candidateSerial.toString()
                 withCounter = 1
 
-                val statusTag = if (cells.size >= 5) cells[1].text().trim() else ""[cite: 4, 5]
-                val caseDetailCell = if (cells.size >= 5) cells[2] else cells[1][cite: 4, 5]
-                val partyCell = if (cells.size >= 5) cells[3] else cells[2][cite: 4, 5]
+                val statusTag = if (cells.size >= 5) cells[1].text().trim() else ""
+                val caseDetailCell = if (cells.size >= 5) cells[2] else cells[1]
+                val partyCell = if (cells.size >= 5) cells[3] else cells[2]
 
                 val caseDetailText = caseDetailCell.text().trim()
                 val cleanParty = cleanPartyText(partyCell.text().trim())
 
                 // Check for Correction List structure (e.g. 1/2026 in case NA528-37465-2026)
-                val isCorrection = caseDetailText.contains("in case", ignoreCase = true) || currentListType == "Correction"[cite: 5]
+                val isCorrection = caseDetailText.contains("in case", ignoreCase = true) || currentListType == "Correction"
                 val match = caseRegex.find(caseDetailText)
 
                 if (match != null) {
