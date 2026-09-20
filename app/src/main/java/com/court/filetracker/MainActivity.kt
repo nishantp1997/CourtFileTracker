@@ -1942,7 +1942,8 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                                                 Toast.makeText(context, "Invalid captcha entered. Please try again.", Toast.LENGTH_LONG).show()
                                             } else {
                                                 // If HTML response returned, reload the error page in the webview to show what the court portal responded with
-                                                view?.loadDataWithBaseURL(downloadUrl, preview, "text/html", "UTF-8", null)
+                                                // To this:
+this@apply.loadDataWithBaseURL(downloadUrl, preview, "text/html", "UTF-8", null)
                                             }
                                         }
                                     }
