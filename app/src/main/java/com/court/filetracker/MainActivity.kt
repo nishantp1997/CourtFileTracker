@@ -2318,7 +2318,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                                 } catch (e: Exception) {
                                     withContext(Dispatchers.Main) {
                                         isProcessingPdf = false
-                                        Toast.makeText(context, "Failed to download PDF: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "Failed to download PDF: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             }
