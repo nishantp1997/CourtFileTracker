@@ -94,6 +94,12 @@ fun normalizeDate(input: String): String = input.trim()
 fun normalizeSearchQuery(input: String): String = input.trim()
 fun stripLeadingZeros(input: String): String = input.trim().trimStart('0').ifEmpty { "0" }
 
+/**
+ * Multi-Date Historical Dispatch Tracking Engine
+ * Accurately parses all dispatch events for a target date out of the file's historyLog,
+ * cross-checks dispatchDatesCsv, and checks active dispatchDate.
+ * Ensures a file dispatched multiple times across different dates appears on every date it was sent.
+ */
 fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<String> {
     val courtsFound = mutableSetOf<String>()
 
