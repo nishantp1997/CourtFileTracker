@@ -11,19 +11,19 @@ import androidx.room.PrimaryKey
 data class FileRecord(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val fileNo: String,               // e.g. "30174/2026"
-    val dispatchDate: String,         // e.g. "18-09-26"
+    val fileNo: String,               // e.g. "11000/2026"
+    val dispatchDate: String,         // e.g. "21-09-26"
     val dispatchDatesCsv: String,
-    val courtNo: String,              // e.g. "79"
-    val serialNo: String,             // e.g. "DCL - 1"
+    val courtNo: String,              // e.g. "80"
+    val serialNo: String,             // e.g. "DCL - 88"
     val status: String,               // e.g. "Dispatched", "Taken Up", "Received from Court"
     val storageLocation: String,      // e.g. "Listing Seat", "Shelf"
     val sentToChamber: Boolean = false,
     val judgeName: String = "",
     val remarks: String = "",
     val historyLog: String = "",
-    val reportsOnRecord: String = "",     // JSON / Multiline reports: "Notice: Served (16-09-26)"
-    val applicationsOnRecord: String = "" // CSV: "9/2026, 14/2025"
+    val reportsOnRecord: String = "",     // Reports kept on record
+    val applicationsOnRecord: String = "" // Applications [App No]/[Year]
 )
 
 @Entity(
@@ -33,18 +33,16 @@ data class FileRecord(
 data class CauseListRecord(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
-    val causeListDate: String,        // e.g. "18-09-26"
-    val courtNo: String,              // e.g. "79"
-    val serialNo: String,             // e.g. "1", "238.1"
+    val causeListDate: String,        // e.g. "21-09-26"
+    val courtNo: String,              // e.g. "80"
+    val serialNo: String,             // e.g. "88", "88.1"
+    val statusTag: String = "",       // "PO", "WC", "DF", "LO", "TU", "LAFP", etc.
     val listType: String,             // "DCL", "ACL", "Correction"
     val caseType: String,             // "NA528", "A482", "CRLA"
-    val fileSerialNo: String,         // "30174"
+    val fileSerialNo: String,         // "11000"
     val fileYear: String,             // "2026"
-    val fileNo: String,               // "30174/2026"
-    val partyName: String = "",       // "RAM KISHAN VS STATE OF U.P."
-    val petitionerCounsel: String = "",
-    val respondentCounsel: String = "",
-    val connectedCases: String = ""   // e.g. "CRLA/1965/1988 (Hanif vs State)"
+    val fileNo: String,               // "11000/2026"
+    val partyName: String = ""        // "P1 VS P2"
 )
 
 data class FullDatabaseBackupPayload(
