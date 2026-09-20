@@ -13,18 +13,19 @@ object WebCauseListParser {
         val records = mutableListOf<CauseListRecord>()
         val doc: Document = Jsoup.parse(htmlContent)
 
-        // 1. Locate the container or main table
-        val table = doc.selectFirst("#CauseListDiv table.table-causelist")
-            ?: doc.selectFirst("table.table-causelist")
-            ?: doc.selectFirst("table")
+        // Locate the active rendered Cause List container
+        val causeListContainer = doc.selectFirst("#CauseListDiv") ?: doc
+        val table = causeListContainer.selectFirst("table.table-causelist")
+            ?: causeListContainer.selectFirst("table")
             ?: return emptyList()
 
         val rows = table.select("tr")
 
-        // 2. Identify default cause list category
+        // Scope header inspection strictly to #CauseListDiv to avoid false positives from the selection menu
+        val containerHeaderText = causeListContainer.select(".card-header, thead, th").text()
         var currentListType = when {
-            htmlContent.contains("Correction Application List", ignoreCase = true) -> "Correction"
-            htmlContent.contains("Additional", ignoreCase = true) || htmlContent.contains("Unlisted", ignoreCase = true) -> "ACL"
+            containerHeaderText.contains("Correction Application List", ignoreCase = true) -> "Correction"
+            containerHeaderText.contains("Additional", ignoreCase = true) || containerHeaderText.contains("Unlisted", ignoreCase = true) -> "ACL"
             else -> "DCL"
         }
 
@@ -36,18 +37,18 @@ object WebCauseListParser {
         for (row in rows) {
             val text = row.text().trim()
 
-            // Detect embedded sub-headers within the table
+            // Detect section shifts inside the active table
             if (row.select("th[colspan], td[colspan]").isNotEmpty()) {
                 if (text.contains("Correction Application List", ignoreCase = true)) {
                     currentListType = "Correction"
                 } else if (text.contains("Additional", ignoreCase = true) || text.contains("Unlisted", ignoreCase = true)) {
                     currentListType = "ACL"
-                } else if (text.contains("Combined Cause List", ignoreCase = true) || text.contains("Fresh List", ignoreCase = true)) {
+                } else if (text.contains("Combined Cause List", ignoreCase = true) || text.contains("Fresh List", ignoreCase = true) || text.contains("Daily Cause List", ignoreCase = true)) {
                     currentListType = "DCL"
                 }
             }
 
-            // Skip metadata details rows (TC No, Crime No, earlier filing logs)
+            // Skip metadata and details rows
             if (row.select("p.text-dark").isNotEmpty() || 
                 text.startsWith("TC No", ignoreCase = true) || 
                 text.startsWith("Crime No", ignoreCase = true) ||
@@ -59,10 +60,7 @@ object WebCauseListParser {
             val cells = row.select("td")
             if (cells.isEmpty()) continue
 
-            // ----------------------------------------------------
-            // CASE TYPE 1: Connected Companion Case ("with")
-            // HTML pattern: <td colspan="2">with</td> <td>Case</td> <td>Party</td>
-            // ----------------------------------------------------
+            // Connected Companion Case ("with")
             val isWithRow = cells.any { it.text().trim().equals("with", ignoreCase = true) }
             if (isWithRow) {
                 val caseCellText = cells.getOrNull(1)?.text()?.trim() ?: ""
@@ -95,9 +93,7 @@ object WebCauseListParser {
                 continue
             }
 
-            // ----------------------------------------------------
-            // CASE TYPE 2: Leading Case or Correction Application Case
-            // ----------------------------------------------------
+            // Leading Case or Correction Case
             val firstCellText = cells[0].text().trim()
             val candidateSerial = firstCellText.toIntOrNull()
 
@@ -112,8 +108,8 @@ object WebCauseListParser {
                 val caseDetailText = caseDetailCell.text().trim()
                 val cleanParty = cleanPartyText(partyCell.text().trim())
 
-                // Check for Correction List structure (e.g. 1/2026 in case NA528-37465-2026)
-                val isCorrection = caseDetailText.contains("in case", ignoreCase = true) || currentListType == "Correction"
+                // A case is only marked "Correction" if the list type itself is Correction
+                val isCorrectionList = currentListType == "Correction"
                 val match = caseRegex.find(caseDetailText)
 
                 if (match != null) {
@@ -126,8 +122,8 @@ object WebCauseListParser {
                             causeListDate = fallbackDate,
                             courtNo = fallbackCourtNo,
                             serialNo = lastMainSerial,
-                            statusTag = statusTag.ifEmpty { if (isCorrection) "Correction" else "" },
-                            listType = if (isCorrection) "Correction" else currentListType,
+                            statusTag = statusTag.ifEmpty { if (isCorrectionList) "Correction" else "" },
+                            listType = currentListType,
                             caseType = cType,
                             fileSerialNo = fSerial,
                             fileYear = fYear,
