@@ -1950,8 +1950,20 @@ fun AddCaseMetaDataDialog(record: FileRecord, onDismiss: () -> Unit, onSave: (Fi
                     OutlinedTextField(value = reportDateInput, onValueChange = { reportDateInput = it }, label = { Text("Report Date (Optional e.g. 18-09-26)") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
                 } else {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(value = appNoInput, onValueChange = { appNoInput = it }, label = { Text("App No (e.g. 9)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))[cite: 1]
-                        OutlinedTextField(value = appYearInput, onValueChange = { appYearInput = it }, label = { Text("Year (e.g. 2026)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))[cite: 1]
+                        OutlinedTextField(
+                            value = appNoInput,
+                            onValueChange = { appNoInput = it },
+                            label = { Text("App No (e.g. 9)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = appYearInput,
+                            onValueChange = { appYearInput = it },
+                            label = { Text("Year (e.g. 2026)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                     Text("Format: [App No]/[Year]", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                 }
