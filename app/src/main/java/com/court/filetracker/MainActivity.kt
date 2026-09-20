@@ -8,6 +8,7 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.util.Base64
 import android.view.ViewGroup
 import android.webkit.*
 import android.widget.Toast
@@ -52,7 +53,6 @@ import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import android.util.Base64
 
 class MainActivity : ComponentActivity() {
 
@@ -172,7 +172,32 @@ fun MainAppScreen(
     val normalizedSearchFileNo = remember(searchFileNoInput) { normalizeSearchQuery(searchFileNoInput) }
     val normalizedInterlocatorDate = remember(searchDateInterlocator) { if (searchDateInterlocator.isBlank()) "" else normalizeDate(searchDateInterlocator) }
 
+    // Sanitation on initial load to clean up any records previously misflagged with Cause List Identified
+    LaunchedEffect(Unit) {
+        scope.launch(Dispatchers.IO) {
+            val records = fileDao.getAllRecords().first()
+            val dirty = records.filter { it.status == "Cause List Identified" }
+            if (dirty.isNotEmpty()) {
+                val sanitized = dirty.map {
+                    it.copy(
+                        dispatchDate = "",
+                        dispatchDatesCsv = "",
+                        courtNo = "N/A",
+                        serialNo = "",
+                        status = "Unassigned"
+                    )
+                }
+                fileDao.insertOrUpdateAll(sanitized)
+            }
+        }
+    }
+
     fun getDispatchedCourtForDate(record: FileRecord, targetDate: String): String {
+        val nonDispatchStatuses = setOf("Unassigned", "Not Sent to Court", "Entry Deleted", "Cause List Identified")
+        if (nonDispatchStatuses.contains(record.status) && record.courtNo == "N/A") {
+            return "N/A"
+        }
+
         val logLines = record.historyLog.split("\n")
         val dispatchLine = logLines.firstOrNull { line ->
             line.contains("[$targetDate]") && 
@@ -183,7 +208,14 @@ fun MainAppScreen(
             val match = Regex("Court No:\\s*(\\d+)").find(dispatchLine)
             if (match != null) return stripLeadingZeros(match.groupValues[1])
         }
-        if (record.dispatchDate == targetDate && record.courtNo != "N/A" && record.courtNo.isNotBlank()) {
+
+        if (record.dispatchDate == targetDate && 
+            record.courtNo != "N/A" && 
+            record.courtNo.isNotBlank() &&
+            record.status != "Unassigned" &&
+            record.status != "Not Sent to Court" &&
+            record.status != "Entry Deleted"
+        ) {
             return stripLeadingZeros(record.courtNo)
         }
         return "N/A"
@@ -453,11 +485,11 @@ fun MainAppScreen(
             }
         ) { padding ->
             Box(
-    modifier = Modifier
-        .padding(padding)
-        .fillMaxSize()
-        .then(if (currentView == "ADD_CAUSE_LIST" || currentView == "CAUSE_LIST_PORTAL") Modifier else Modifier.padding(12.dp))
-) {
+                modifier = Modifier
+                    .padding(padding)
+                    .fillMaxSize()
+                    .then(if (currentView == "ADD_CAUSE_LIST" || currentView == "CAUSE_LIST_PORTAL") Modifier else Modifier.padding(12.dp))
+            ) {
 
                 // 1. IN-APP CAUSE LIST CASE STATUS WEB PORTAL
                 if (currentView == "CAUSE_LIST_PORTAL") {
@@ -694,57 +726,57 @@ fun MainAppScreen(
                             }
 
                             "FILE_NO" -> {
-    OutlinedTextField(
-        value = searchFileNoInput,
-        onValueChange = { searchFileNoInput = it },
-        label = { Text("Enter File Number (e.g. 11000/2026)") },
-        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-        trailingIcon = {
-            if (searchFileNoInput.isNotEmpty()) {
-                IconButton(onClick = { searchFileNoInput = "" }) {
-                    Icon(Icons.Default.Close, contentDescription = "Clear")
-                }
-            }
-        }
-    )
+                                OutlinedTextField(
+                                    value = searchFileNoInput,
+                                    onValueChange = { searchFileNoInput = it },
+                                    label = { Text("Enter File Number (e.g. 11000/2026)") },
+                                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                                    trailingIcon = {
+                                        if (searchFileNoInput.isNotEmpty()) {
+                                            IconButton(onClick = { searchFileNoInput = "" }) {
+                                                Icon(Icons.Default.Close, contentDescription = "Clear")
+                                            }
+                                        }
+                                    }
+                                )
 
-    // Only consider matches when the input query contains non-whitespace text
-    val activeResults = remember(fileNoSearchResults, normalizedSearchFileNo) {
-        if (normalizedSearchFileNo.isBlank()) emptyList() else fileNoSearchResults
-    }
+                                // Strictly show results only when text is entered
+                                val activeResults = remember(fileNoSearchResults, normalizedSearchFileNo) {
+                                    if (normalizedSearchFileNo.isBlank()) emptyList() else fileNoSearchResults
+                                }
 
-    if (normalizedSearchFileNo.isNotBlank()) {
-        Text(
-            text = "Matching Files (${activeResults.size}):",
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(vertical = 4.dp)
-        )
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-            items(activeResults) { record ->
-                CaseCardWithMeta(
-                    record = record,
-                    onClick = { activeTraceRecord = record },
-                    onUpdate = { activeUpdateRecord = record },
-                    onAddMeta = { targetFileForMetaData = record }
-                )
-            }
-        }
-    } else {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "Enter a file number above to search records.",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
+                                if (normalizedSearchFileNo.isNotBlank()) {
+                                    Text(
+                                        text = "Matching Files (${activeResults.size}):",
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(vertical = 4.dp)
+                                    )
+                                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+                                        items(activeResults) { record ->
+                                            CaseCardWithMeta(
+                                                record = record,
+                                                onClick = { activeTraceRecord = record },
+                                                onUpdate = { activeUpdateRecord = record },
+                                                onAddMeta = { targetFileForMetaData = record }
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .weight(1f),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "Enter a file number above to search records.",
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
 
                             "CHAMBER" -> {
                                 Text("All In Chamber Files (${chamberFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
@@ -972,7 +1004,7 @@ fun MainAppScreen(
                         )
                     }
 
-                // 6. DISPATCH FROM CAUSE LIST (STANDALONE TILES WITH METADATA / REMARKS)
+                // 6. DISPATCH FROM CAUSE LIST
                 } else if (currentView == "DISPATCH_CAUSE_LIST") {
                     Column(modifier = Modifier.fillMaxSize()) {
                         OutlinedTextField(
@@ -1032,7 +1064,6 @@ fun MainAppScreen(
 
                                             Text("${clRecord.caseType} | ${clRecord.partyName}", fontSize = 12.sp, maxLines = 2, modifier = Modifier.padding(vertical = 2.dp))
 
-                                            // Local Tracker Status Banner with Remarks & Location
                                             Surface(
                                                 color = if (matchedLocal != null) Color(0xFFE8F5E9) else Color(0xFFFFF3E0),
                                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
@@ -1059,23 +1090,21 @@ fun MainAppScreen(
                                             }
 
                                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
+                                                // Fixed: Never prematurely insert into Room. Provide in-memory draft with no dispatch date.
                                                 OutlinedButton(onClick = {
                                                     scope.launch {
-                                                        var target = fileDao.getRecordByFileNo(clRecord.fileNo)
-                                                        if (target == null) {
-                                                            val newRec = FileRecord(
-                                                                fileNo = clRecord.fileNo,
-                                                                dispatchDate = clRecord.causeListDate,
-                                                                dispatchDatesCsv = clRecord.causeListDate,
-                                                                courtNo = clRecord.courtNo,
-                                                                serialNo = "${clRecord.listType} - ${clRecord.serialNo}",
-                                                                status = "Cause List Identified",
-                                                                storageLocation = "",
-                                                                historyLog = "[${clRecord.causeListDate}] Sourced from Cause List Court ${clRecord.courtNo}"
-                                                            )
-                                                            val id = fileDao.insertOrUpdateRecord(newRec)
-                                                            target = newRec.copy(id = id)
-                                                        }
+                                                        val existing = fileDao.getRecordByFileNo(clRecord.fileNo)
+                                                        val target = existing ?: FileRecord(
+                                                            id = 0,
+                                                            fileNo = clRecord.fileNo,
+                                                            dispatchDate = "",
+                                                            dispatchDatesCsv = "",
+                                                            courtNo = "N/A",
+                                                            serialNo = "",
+                                                            status = "Unassigned",
+                                                            storageLocation = "",
+                                                            historyLog = ""
+                                                        )
                                                         targetFileForMetaData = target
                                                     }
                                                 }) { Text("Add Meta-Data", fontSize = 11.sp) }
@@ -1657,12 +1686,10 @@ fun CaseCardWithMeta(
     }
 }
 
-
 /**
  * In-App Cause List Case Status Portal
- * Handles standard form submission for WebDownloadOrderSheet.do without fetch conflicts,
- * captures the authenticated PDF stream via session-bound byte array extraction,
- * and launches the rendered PDF directly.
+ * Solves the WebDownloadOrderSheet.do frozen page issue by capturing the PDF stream 
+ * generated after captcha submission and opening it via FileProvider.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -1879,8 +1906,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 isLoading = false
-
-                                // Ensure forms submit directly into this frame without opening an unhandled target="_blank"
                                 view?.evaluateJavascript(
                                     """
                                     (function() {
@@ -1901,7 +1926,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             }
                         }
 
-                        // Listen directly for binary PDF streams served after the form is submitted
+                        // Catch the binary PDF response sent by WebDownloadOrderSheet.do
                         setDownloadListener { downloadUrl, userAgent, contentDisposition, mimeType, contentLength ->
                             isProcessingPdf = true
                             scope.launch(Dispatchers.IO) {
@@ -1941,9 +1966,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                                             if (preview.contains("alert(", ignoreCase = true) || preview.contains("invalid", ignoreCase = true)) {
                                                 Toast.makeText(context, "Invalid captcha entered. Please try again.", Toast.LENGTH_LONG).show()
                                             } else {
-                                                // If HTML response returned, reload the error page in the webview to show what the court portal responded with
-                                                // To this:
-this@apply.loadDataWithBaseURL(downloadUrl, preview, "text/html", "UTF-8", null)
+                                                this@apply.loadDataWithBaseURL(downloadUrl, preview, "text/html", "UTF-8", null)
                                             }
                                         }
                                     }
@@ -2003,6 +2026,7 @@ this@apply.loadDataWithBaseURL(downloadUrl, preview, "text/html", "UTF-8", null)
         }
     }
 }
+
 /**
  * In-App Web View for "Add Cause List From Web":
  * Compact UI with single-prompt lock per loaded cause list table.
@@ -2140,7 +2164,6 @@ fun CauseListIngestionWebView(
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
-                                // Injected script computes a signature of the table rows and alerts Android strictly once
                                 view?.evaluateJavascript(
                                     """
                                     (function() {
@@ -2234,7 +2257,6 @@ fun CauseListIngestionWebView(
     }
 }
 
-
 /**
  * Add Case Meta-Data Attachment Dialog
  * - No default selection: User must explicitly choose an option
@@ -2245,9 +2267,7 @@ fun AddCaseMetaDataDialog(
     onDismiss: () -> Unit,
     onSave: (FileRecord) -> Unit
 ) {
-    var metaType by remember { mutableStateOf("REPORT") } // "REPORT" or "APPLICATION"
-    
-    // Default to empty string so nothing is pre-selected
+    var metaType by remember { mutableStateOf("REPORT") }
     var selectedReportOption by remember { mutableStateOf("") }
     var customReportText by remember { mutableStateOf("") }
     var reportDateInput by remember { mutableStateOf("") }
