@@ -1,16 +1,27 @@
 package com.court.filetracker
 
+import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
+import android.view.ViewGroup
+import android.webkit.*
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -19,14 +30,24 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -93,7 +114,7 @@ fun MainAppScreen(
     var remarksInput by remember { mutableStateOf("") }
     var judgeNameInput by remember { mutableStateOf("") }
 
-    // Navigation Views
+    // Navigation Views: "MAIN", "SEARCH_MENU", "BULK", "BULK_LOCATION", "REPORTS_PANEL", "CAUSE_LIST"
     var currentView by remember { mutableStateOf("MAIN") }
     var activeSearchOption by remember { mutableStateOf("NONE") }
     var searchDateInput by remember { mutableStateOf(currentDate) }
@@ -313,6 +334,15 @@ fun MainAppScreen(
                         },
                         icon = { Icon(Icons.Default.Share, contentDescription = null) }
                     )
+                    NavigationDrawerItem(
+                        label = { Text("Cause List with Case Status") },
+                        selected = currentView == "CAUSE_LIST",
+                        onClick = {
+                            currentView = "CAUSE_LIST"
+                            scope.launch { drawerState.close() }
+                        },
+                        icon = { Icon(Icons.Default.Info, contentDescription = null) }
+                    )
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                     
                     NavigationDrawerItem(
@@ -378,6 +408,7 @@ fun MainAppScreen(
                                 "BULK" -> "Bulk Operations by Date & Court"
                                 "BULK_LOCATION" -> "Bulk Location Management"
                                 "REPORTS_PANEL" -> "PDF Reports Engine"
+                                "CAUSE_LIST" -> "Cause List with Case Status"
                                 else -> "Allahabad High Court File Tracker"
                             },
                             fontSize = 16.sp
@@ -403,7 +434,11 @@ fun MainAppScreen(
         ) { padding ->
             Column(modifier = Modifier.padding(padding).padding(12.dp)) {
 
-                if (currentView == "SEARCH_MENU") {
+                if (currentView == "CAUSE_LIST") {
+                    CauseListWebViewContent(
+                        onNavigateBack = { currentView = "MAIN" }
+                    )
+                } else if (currentView == "SEARCH_MENU") {
                     Text("Select Search Method:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
 
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -1669,5 +1704,280 @@ fun MainAppScreen(
                 Button(onClick = { activeTraceRecord = null }) { Text("Close") }
             }
         )
+    }
+}
+
+/**
+ * Embedded Cause List In-App Browser Component with Backstack & Ephemeral PDF Interception
+ */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun CauseListWebViewContent(
+    onNavigateBack: () -> Unit
+) {
+    var webView: WebView? by remember { mutableStateOf(null) }
+    var activePdfUrl by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
+
+    // Intercept back presses to traverse web history first, then exit back to the main app
+    BackHandler {
+        if (webView?.canGoBack() == true) {
+            webView?.goBack()
+        } else {
+            onNavigateBack()
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Button(
+                    onClick = {
+                        if (webView?.canGoBack() == true) {
+                            webView?.goBack()
+                        } else {
+                            onNavigateBack()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                ) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Back", fontSize = 12.sp)
+                }
+
+                OutlinedButton(onClick = { webView?.reload() }) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Reload", modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Reload", fontSize = 12.sp)
+                }
+            }
+
+            OutlinedButton(onClick = { onNavigateBack() }) {
+                Text("Exit Portal", fontSize = 12.sp)
+            }
+        }
+
+        if (isLoading) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp))
+        }
+
+        Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            loadWithOverviewMode = true
+                            useWideViewPort = true
+                            builtInZoomControls = true
+                            displayZoomControls = false
+                            setSupportZoom(true)
+                            cacheMode = WebSettings.LOAD_DEFAULT
+                        }
+
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                isLoading = true
+                            }
+
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                isLoading = false
+                            }
+
+                            override fun shouldOverrideUrlLoading(
+                                view: WebView?,
+                                request: WebResourceRequest?
+                            ): Boolean {
+                                val destination = request?.url?.toString() ?: return false
+                                if (destination.endsWith(".pdf", ignoreCase = true) || destination.contains(".pdf?", ignoreCase = true)) {
+                                    activePdfUrl = destination
+                                    return true
+                                }
+                                return false
+                            }
+                        }
+
+                        // Intercept file downloads triggered via Content-Disposition headers
+                        setDownloadListener { url, _, _, _, _ ->
+                            if (url.endsWith(".pdf", ignoreCase = true) || url.contains("pdf", ignoreCase = true)) {
+                                activePdfUrl = url
+                            }
+                        }
+
+                        loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
+                        webView = this
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // Render Ephemeral PDF Viewer Dialog when a Judgment PDF is opened
+            activePdfUrl?.let { url ->
+                EphemeralPdfViewerDialog(
+                    pdfUrl = url,
+                    onDismiss = { activePdfUrl = null }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Ephemeral In-Memory PDF Dialog: Streams Judgment PDF to cache, renders page Bitmaps,
+ * and deletes the file from device storage the moment it is dismissed.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EphemeralPdfViewerDialog(
+    pdfUrl: String,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var isLoading by remember { mutableStateOf(true) }
+    var pageBitmaps by remember { mutableStateOf<List<Bitmap>>(emptyList()) }
+    var tempPdfFile by remember { mutableStateOf<File?>(null) }
+
+    fun cleanupFile() {
+        tempPdfFile?.let { file ->
+            try {
+                if (file.exists()) {
+                    file.delete()
+                }
+            } catch (ignored: Exception) {}
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            cleanupFile()
+        }
+    }
+
+    BackHandler {
+        cleanupFile()
+        onDismiss()
+    }
+
+    LaunchedEffect(pdfUrl) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val ephemeralDir = File(context.cacheDir, "ephemeral_pdfs").apply { if (!exists()) mkdirs() }
+                val targetFile = File(ephemeralDir, "temp_judgment_${System.currentTimeMillis()}.pdf")
+                tempPdfFile = targetFile
+
+                // Stream PDF to ephemeral cache
+                val connection = URL(pdfUrl).openConnection() as HttpURLConnection
+                connection.connectTimeout = 15000
+                connection.readTimeout = 15000
+                connection.inputStream.use { input ->
+                    FileOutputStream(targetFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                // Render PDF to Bitmaps in device memory
+                val pfd = ParcelFileDescriptor.open(targetFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                val renderer = PdfRenderer(pfd)
+                val bitmaps = mutableListOf<Bitmap>()
+
+                for (i in 0 until renderer.pageCount) {
+                    val page = renderer.openPage(i)
+                    // Render page at 2x density for crisp reading of legal orders
+                    val bitmap = Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888)
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    bitmaps.add(bitmap)
+                    page.close()
+                }
+
+                renderer.close()
+                pfd.close()
+
+                withContext(Dispatchers.Main) {
+                    pageBitmaps = bitmaps
+                    isLoading = false
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Could not load judgment: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    cleanupFile()
+                    onDismiss()
+                }
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = {
+            cleanupFile()
+            onDismiss()
+        },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Judgment / Order Preview", maxLines = 1, fontSize = 16.sp) },
+                    navigationIcon = {
+                        IconButton(onClick = {
+                            cleanupFile()
+                            onDismiss()
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "Close and delete")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+                    )
+                )
+            }
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .background(Color(0xFFE0E0E0)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (isLoading) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("Streaming judgment securely...", color = Color.DarkGray, fontSize = 13.sp)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        itemsIndexed(pageBitmaps) { index, bmp ->
+                            Card(
+                                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = "Judgment Page ${index + 1}",
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
