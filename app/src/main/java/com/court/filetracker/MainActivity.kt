@@ -94,12 +94,6 @@ fun normalizeDate(input: String): String = input.trim()
 fun normalizeSearchQuery(input: String): String = input.trim()
 fun stripLeadingZeros(input: String): String = input.trim().trimStart('0').ifEmpty { "0" }
 
-/**
- * Multi-Date Historical Dispatch Tracking Engine
- * Accurately parses all dispatch events for a target date out of the file's historyLog,
- * cross-checks dispatchDatesCsv, and checks active dispatchDate.
- * Ensures a file dispatched multiple times across different dates appears on every date it was sent.
- */
 fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<String> {
     val courtsFound = mutableSetOf<String>()
 
@@ -431,12 +425,13 @@ fun MainAppScreen(
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                     
                     NavigationDrawerItem(
-                        label = { Text("Send Backup to WhatsApp") },
+                        label = { Text("Share JSON Backup") },
                         selected = false,
                         onClick = {
                             scope.launch {
                                 val allRecords = dao.getAllRecords().first()
-                                JsonBackupHelper.shareDatabaseToWhatsApp(context, allRecords)
+                                val cls = causeListDao.getAllCauseListRecords().first()
+                                JsonBackupHelper.exportFullBackup(context, allRecords, cls, shareDirectly = true)
                                 drawerState.close()
                             }
                         },
@@ -448,7 +443,8 @@ fun MainAppScreen(
                         onClick = {
                             scope.launch {
                                 val allRecords = dao.getAllRecords().first()
-                                JsonBackupHelper.downloadDatabaseJson(context, allRecords)
+                                val cls = causeListDao.getAllCauseListRecords().first()
+                                JsonBackupHelper.exportFullBackup(context, allRecords, cls, shareDirectly = false)
                                 drawerState.close()
                             }
                         },
@@ -460,18 +456,7 @@ fun MainAppScreen(
                         onClick = {
                             scope.launch { drawerState.close() }
                             onPickJson { uri ->
-                                JsonBackupHelper.importDatabaseFromJson(context, uri, dao) {}
-                            }
-                        },
-                        icon = { Icon(Icons.Default.Refresh, contentDescription = null) }
-                    )
-                    NavigationDrawerItem(
-                        label = { Text("Rebuild DB from PDF") },
-                        selected = false,
-                        onClick = {
-                            scope.launch { drawerState.close() }
-                            onPickPdf { uri ->
-                                PdfImportHelper.restoreDatabaseFromPdf(context, uri, dao) {}
+                                JsonBackupHelper.importFullBackup(context, uri, dao, causeListDao) {}
                             }
                         },
                         icon = { Icon(Icons.Default.Refresh, contentDescription = null) }
@@ -936,7 +921,7 @@ fun MainAppScreen(
                                         Text("Files Dispatched to Court $searchSelectedCourt on $normalizedSearchDate (${searchCourtFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
                                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             items(searchCourtFiles) { record ->
-                                                val courtForThisDate = getDispatchedCourtForDate(record, normalizedSearchDate)
+                                                val courtForThisDate = getDispatchedCourtsForDate(record, normalizedSearchDate).joinToString(",")
                                                 Card(
                                                     modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
                                                     colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
@@ -2009,42 +1994,10 @@ fun MainAppScreen(
     }
 }
 
-@Composable
-fun CaseCardWithMeta(
-    record: FileRecord,
-    onClick: () -> Unit,
-    onUpdate: () -> Unit,
-    onAddMeta: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
-        colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(10.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
-                    Text(record.status, color = Color.White)
-                }
-            }
-            Text("Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
-            if (record.storageLocation.isNotBlank()) Text("📍 Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
-            if (record.remarks.isNotBlank()) Text("📝 Remarks: ${record.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
-            if (record.reportsOnRecord.isNotBlank()) Text("📑 Reports: ${record.reportsOnRecord.replace("\n", ", ")}", fontSize = 11.sp, color = Color(0xFF1565C0))
-            if (record.applicationsOnRecord.isNotBlank()) Text("📋 Apps: ${record.applicationsOnRecord}", fontSize = 11.sp, color = Color(0xFF6A1B9A))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
-                OutlinedButton(onClick = onAddMeta) { Text("Meta-Data", fontSize = 11.sp) }
-                Button(onClick = onUpdate) { Text("Update Status", fontSize = 11.sp) }
-            }
-        }
-    }
-}
-
 /**
  * In-App Cause List Case Status Portal
- * Solves the WebDownloadOrderSheet.do frozen page issue by capturing the PDF stream 
- * generated after captcha submission and opening it via FileProvider.
+ * Handles standard form submission for WebDownloadOrderSheet.do,
+ * captures authenticated PDF streams, and launches the rendered PDF directly.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
