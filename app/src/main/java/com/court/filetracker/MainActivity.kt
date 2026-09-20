@@ -2,6 +2,7 @@ package com.court.filetracker
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.net.Uri
@@ -39,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -106,6 +108,8 @@ fun MainAppScreen(
     val context = LocalContext.current
     val currentDate = remember { SimpleDateFormat("dd-MM-yy", Locale.getDefault()).format(Date()) }
 
+    var currentView by remember { mutableStateOf("MAIN") }
+
     // Core Form States
     var selectedMode by remember { mutableStateOf("Dispatched") }
     var dispatchDateInput by remember { mutableStateOf(currentDate) }
@@ -117,14 +121,11 @@ fun MainAppScreen(
     var remarksInput by remember { mutableStateOf("") }
     var judgeNameInput by remember { mutableStateOf("") }
 
-    // Navigation Views: "MAIN", "SEARCH_MENU", "BULK", "BULK_LOCATION", "REPORTS_PANEL", "CAUSE_LIST_PORTAL", "ADD_CAUSE_LIST", "DISPATCH_CAUSE_LIST"
-    var currentView by remember { mutableStateOf("MAIN") }
+    // Search Engine States
     var activeSearchOption by remember { mutableStateOf("NONE") }
     var searchDateInput by remember { mutableStateOf(currentDate) }
     var searchSelectedCourt by remember { mutableStateOf<String?>(null) }
     var searchFileNoInput by remember { mutableStateOf("") }
-
-    // Option 5: Multi-Criteria Search States
     var searchCategory by remember { mutableStateOf("LOCATION") }
     var searchLocOption by remember { mutableStateOf("Listing Seat") }
     var searchCustomLocText by remember { mutableStateOf("") }
@@ -133,22 +134,22 @@ fun MainAppScreen(
     var searchStatusOption by remember { mutableStateOf("Dispatched") }
     var searchDateInterlocator by remember { mutableStateOf("") }
 
-    // Report Generator Input States
-    var reportTargetFileNo by remember { mutableStateOf("") }
-    var reportTargetDate by remember { mutableStateOf(currentDate) }
-    var reportSelectedCourtChip by remember { mutableStateOf<String?>(null) }
-
-    // Bulk Operations Mode States
+    // Bulk Operations
     var bulkDateInput by remember { mutableStateOf(currentDate) }
     var bulkSelectedCourtChip by remember { mutableStateOf<String?>(null) }
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
     var selectedFileIds by remember { mutableStateOf(setOf<Long>()) }
     var showBulkReceivedDialog by remember { mutableStateOf(false) }
 
-    // Bulk Location Screen States
+    // Bulk Location
     var bulkLocationCategory by remember { mutableStateOf("PASS_OVER") }
     var bulkLocSelectedIds by remember { mutableStateOf(setOf<Long>()) }
     var showSetLocationDialog by remember { mutableStateOf(false) }
+
+    // Reports Engine
+    var reportTargetFileNo by remember { mutableStateOf("") }
+    var reportTargetDate by remember { mutableStateOf(currentDate) }
+    var reportSelectedCourtChip by remember { mutableStateOf<String?>(null) }
 
     // Cause List States
     var addClCourtInput by remember { mutableStateOf("") }
@@ -158,13 +159,12 @@ fun MainAppScreen(
     var selectedClCourtChip by remember { mutableStateOf<String?>(null) }
     var clSearchQuery by remember { mutableStateOf("") }
 
-    // Dialog States
+    // Dialogs
     var activeTraceRecord by remember { mutableStateOf<FileRecord?>(null) }
     var activeUpdateRecord by remember { mutableStateOf<FileRecord?>(null) }
     var targetFileForMetaData by remember { mutableStateOf<FileRecord?>(null) }
     var showFlushDialog by remember { mutableStateOf(false) }
 
-    // Normalized Query Triggers
     val normalizedSearchDate = remember(searchDateInput) { normalizeDate(searchDateInput) }
     val normalizedBulkDate = remember(bulkDateInput) { normalizeDate(bulkDateInput) }
     val normalizedReportDate = remember(reportTargetDate) { normalizeDate(reportTargetDate) }
@@ -188,7 +188,6 @@ fun MainAppScreen(
         return "N/A"
     }
 
-    // Search Engine Data Flows
     val rawDateRecords by fileDao.getRecordsByDate(normalizedSearchDate).collectAsState(initial = emptyList())
     val searchCourtsList = remember(rawDateRecords, normalizedSearchDate) {
         rawDateRecords.map { getDispatchedCourtForDate(it, normalizedSearchDate) }
@@ -201,7 +200,6 @@ fun MainAppScreen(
         else rawDateRecords.filter { getDispatchedCourtForDate(it, normalizedSearchDate) == searchSelectedCourt }
     }
 
-    // Bulk Operations Data Flows
     val rawBulkDateRecords by fileDao.getRecordsByDate(normalizedBulkDate).collectAsState(initial = emptyList())
     val bulkCourtsList = remember(rawBulkDateRecords, normalizedBulkDate) {
         rawBulkDateRecords.map { getDispatchedCourtForDate(it, normalizedBulkDate) }
@@ -214,7 +212,6 @@ fun MainAppScreen(
         else rawBulkDateRecords.filter { getDispatchedCourtForDate(it, normalizedBulkDate) == bulkSelectedCourtChip }
     }
 
-    // PDF Reports Panel Data Flows
     val rawReportDateRecords by fileDao.getRecordsByDate(normalizedReportDate).collectAsState(initial = emptyList())
     val reportCourtsList = remember(rawReportDateRecords, normalizedReportDate) {
         rawReportDateRecords.map { getDispatchedCourtForDate(it, normalizedReportDate) }
@@ -227,7 +224,6 @@ fun MainAppScreen(
         else rawReportDateRecords.filter { getDispatchedCourtForDate(it, normalizedReportDate) == reportSelectedCourtChip }
     }
 
-    // Other Search Flows
     val fileNoSearchResults by fileDao.searchRecords(normalizedSearchFileNo).collectAsState(initial = emptyList())
     val allDbRecords by fileDao.getAllRecords().collectAsState(initial = emptyList())
     val chamberFiles = remember(allDbRecords) { allDbRecords.filter { it.sentToChamber || it.status.contains("Chamber", ignoreCase = true) } }
@@ -262,23 +258,8 @@ fun MainAppScreen(
 
             if (normalizedInterlocatorDate.isNotBlank()) {
                 val targetDateTag = "[$normalizedInterlocatorDate]"
-                val hasLogEntryOnDate = rec.historyLog.split("\n").any { line ->
-                    if (!line.contains(targetDateTag)) return@any false
-                    when (searchCategory) {
-                        "LOCATION" -> {
-                            val locVal = if (searchLocOption == "Other") searchCustomLocText.trim() else searchLocOption
-                            line.contains("Loc:", ignoreCase = true) && line.contains(locVal, ignoreCase = true)
-                        }
-                        "JUDGE" -> line.contains("Judge:", ignoreCase = true) && line.contains(searchJudgeTextInput.trim(), ignoreCase = true)
-                        "REMARKS" -> line.contains("Remarks:", ignoreCase = true) && line.contains(searchRemarksTextInput.trim(), ignoreCase = true)
-                        "STATUS" -> line.contains("Status changed to '$searchStatusOption'", ignoreCase = true) || line.contains("Registered as '$searchStatusOption'", ignoreCase = true)
-                        else -> false
-                    }
-                }
-                hasLogEntryOnDate || (rec.dispatchDate == normalizedInterlocatorDate)
-            } else {
-                true
-            }
+                rec.historyLog.split("\n").any { it.contains(targetDateTag) } || (rec.dispatchDate == normalizedInterlocatorDate)
+            } else true
         }
     }
 
@@ -307,7 +288,7 @@ fun MainAppScreen(
             ModalDrawerSheet {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Court File Tracker Menu", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
                     NavigationDrawerItem(
                         label = { Text("Registration / Re-Dispatch") },
@@ -391,7 +372,7 @@ fun MainAppScreen(
                         icon = { Icon(Icons.Default.Delete, contentDescription = null) }
                     )
 
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
                     NavigationDrawerItem(
                         label = { Text("Share JSON Backup") },
@@ -655,7 +636,7 @@ fun MainAppScreen(
                                 OutlinedTextField(
                                     value = searchDateInterlocator,
                                     onValueChange = { searchDateInterlocator = it },
-                                    label = { Text("Filter by Update Date (Optional, e.g. 18-09-26)") },
+                                    label = { Text("Filter by Update Date (Optional, e.g. 21-09-26)") },
                                     leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                                 )
@@ -710,7 +691,7 @@ fun MainAppScreen(
                                 OutlinedTextField(
                                     value = searchFileNoInput,
                                     onValueChange = { searchFileNoInput = it },
-                                    label = { Text("Enter File Number (e.g. 123/2026)") },
+                                    label = { Text("Enter File Number (e.g. 11000/2026)") },
                                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                                     modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
                                 )
@@ -953,7 +934,7 @@ fun MainAppScreen(
                         )
                     }
 
-                // 6. DISPATCH FROM CAUSE LIST
+                // 6. DISPATCH FROM CAUSE LIST (STANDALONE TILES WITH METADATA / REMARKS)
                 } else if (currentView == "DISPATCH_CAUSE_LIST") {
                     Column(modifier = Modifier.fillMaxSize()) {
                         OutlinedTextField(
@@ -981,7 +962,7 @@ fun MainAppScreen(
                             OutlinedTextField(
                                 value = clSearchQuery,
                                 onValueChange = { clSearchQuery = it },
-                                label = { Text("Search by Serial No. or File No.") },
+                                label = { Text("Search Serial No. or File No.") },
                                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                             )
@@ -990,28 +971,53 @@ fun MainAppScreen(
                                 if (clSearchQuery.isBlank()) true
                                 else it.serialNo.contains(clSearchQuery, ignoreCase = true) ||
                                         it.fileNo.contains(clSearchQuery, ignoreCase = true) ||
-                                        it.connectedCases.contains(clSearchQuery, ignoreCase = true)
+                                        it.partyName.contains(clSearchQuery, ignoreCase = true)
                             }
 
                             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                                 items(filtered) { clRecord ->
                                     val matchedLocal = allDbRecords.firstOrNull { it.fileNo == clRecord.fileNo }
-                                    Card(modifier = Modifier.fillMaxWidth()) {
+                                    Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(3.dp)) {
                                         Column(modifier = Modifier.padding(10.dp)) {
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                Text("Sr: ${clRecord.serialNo} (${clRecord.listType})", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                                Text(clRecord.fileNo, fontWeight = FontWeight.Bold)
+                                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("Sr: ${clRecord.serialNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
+                                                    if (clRecord.statusTag.isNotBlank()) {
+                                                        Badge(containerColor = MaterialTheme.colorScheme.secondaryContainer) {
+                                                            Text(clRecord.statusTag, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                                        }
+                                                    }
+                                                    Badge { Text(clRecord.listType) }
+                                                }
+                                                Text(clRecord.fileNo, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                                             }
-                                            Text("${clRecord.caseType} | ${clRecord.partyName}", fontSize = 12.sp, maxLines = 2)
-                                            if (clRecord.connectedCases.isNotBlank()) {
-                                                Text("With: ${clRecord.connectedCases}", fontSize = 11.sp, color = Color(0xFF6A1B9A), fontWeight = FontWeight.SemiBold)
-                                            }
-                                            if (matchedLocal != null) {
-                                                Text("✓ Local Tracker: Status '${matchedLocal.status}' | Loc: ${matchedLocal.storageLocation.ifEmpty { "None" }}", fontSize = 11.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
-                                                if (matchedLocal.reportsOnRecord.isNotBlank()) Text("📑 Reports: ${matchedLocal.reportsOnRecord}", fontSize = 10.sp)
-                                                if (matchedLocal.applicationsOnRecord.isNotBlank()) Text("📋 Apps: ${matchedLocal.applicationsOnRecord}", fontSize = 10.sp)
-                                            } else {
-                                                Text("⚠️ File not yet registered in local tracker.", fontSize = 11.sp, color = Color(0xFFE65100))
+
+                                            Text("${clRecord.caseType} | ${clRecord.partyName}", fontSize = 12.sp, maxLines = 2, modifier = Modifier.padding(vertical = 2.dp))
+
+                                            // Local Tracker Status Banner with Remarks & Location
+                                            Surface(
+                                                color = if (matchedLocal != null) Color(0xFFE8F5E9) else Color(0xFFFFF3E0),
+                                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                            ) {
+                                                Column(modifier = Modifier.padding(6.dp)) {
+                                                    if (matchedLocal != null) {
+                                                        Text("✓ Local Tracker Status: '${matchedLocal.status}'", fontSize = 11.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
+                                                        if (matchedLocal.storageLocation.isNotBlank()) {
+                                                            Text("📍 Location: ${matchedLocal.storageLocation}", fontSize = 11.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
+                                                        }
+                                                        if (matchedLocal.remarks.isNotBlank()) {
+                                                            Text("📝 Remarks: ${matchedLocal.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
+                                                        }
+                                                        if (matchedLocal.reportsOnRecord.isNotBlank()) {
+                                                            Text("📑 Reports: ${matchedLocal.reportsOnRecord.replace("\n", ", ")}", fontSize = 10.sp, color = Color(0xFF1565C0))
+                                                        }
+                                                        if (matchedLocal.applicationsOnRecord.isNotBlank()) {
+                                                            Text("📋 Apps: ${matchedLocal.applicationsOnRecord}", fontSize = 10.sp, color = Color(0xFF6A1B9A))
+                                                        }
+                                                    } else {
+                                                        Text("⚠️ File not yet registered in local tracker.", fontSize = 11.sp, color = Color(0xFFE65100))
+                                                    }
+                                                }
                                             }
 
                                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
@@ -1054,14 +1060,11 @@ fun MainAppScreen(
                         }
                     }
 
-                // 7. PDF REPORTS ENGINE (ALL 4 ORIGINAL CARDS RESTORED)
+                // 7. PDF REPORTS ENGINE
                 } else if (currentView == "REPORTS_PANEL") {
                     LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        item {
-                            Text("PDF Reports & Data Recovery:", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                        }
+                        item { Text("PDF Reports & Data Recovery:", fontWeight = FontWeight.Bold, fontSize = 15.sp) }
 
-                        // Card 1: Master Report
                         item {
                             Card(modifier = Modifier.fillMaxWidth()) {
                                 Column(modifier = Modifier.padding(12.dp)) {
@@ -1074,14 +1077,11 @@ fun MainAppScreen(
                                             }
                                         },
                                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
-                                    ) {
-                                        Text("EXPORT MASTER LEDGER PDF")
-                                    }
+                                    ) { Text("EXPORT MASTER LEDGER PDF") }
                                 }
                             }
                         }
 
-                        // Card 2: Rebuild DB from PDF
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1097,14 +1097,11 @@ fun MainAppScreen(
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
-                                    ) {
-                                        Text("IMPORT MASTER PDF & REBUILD DB")
-                                    }
+                                    ) { Text("IMPORT MASTER PDF & REBUILD DB") }
                                 }
                             }
                         }
 
-                        // Card 3: Single Case File PDF
                         item {
                             Card(modifier = Modifier.fillMaxWidth()) {
                                 Column(modifier = Modifier.padding(12.dp)) {
@@ -1128,14 +1125,11 @@ fun MainAppScreen(
                                             }
                                         },
                                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
-                                    ) {
-                                        Text("EXPORT SINGLE CASE FILE PDF")
-                                    }
+                                    ) { Text("EXPORT SINGLE CASE FILE PDF") }
                                 }
                             }
                         }
 
-                        // Card 4: Date & Court Wise PDF
                         item {
                             Card(modifier = Modifier.fillMaxWidth()) {
                                 Column(modifier = Modifier.padding(12.dp)) {
@@ -1304,9 +1298,7 @@ fun MainAppScreen(
                                         }
                                     },
                                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
-                                ) {
-                                    Text("SAVE RECORD")
-                                }
+                                ) { Text("SAVE RECORD") }
                             }
                         }
 
@@ -1327,7 +1319,7 @@ fun MainAppScreen(
         }
     }
 
-    // DISPOSAL UPDATE MODAL WITH MANDATORY "CHANGE AFFECTED DATE"
+    // Modal Dialogs
     activeUpdateRecord?.let { currentRecordForUpdate ->
         var newStatus by remember { mutableStateOf(currentRecordForUpdate.status.ifEmpty { "Taken Up" }) }
         var locInput by remember { mutableStateOf(currentRecordForUpdate.storageLocation) }
@@ -1427,7 +1419,6 @@ fun MainAppScreen(
         )
     }
 
-    // AUDIT STACK TRACE DIALOG
     activeTraceRecord?.let { currentRecordForTrace ->
         AlertDialog(
             onDismissRequest = { activeTraceRecord = null },
@@ -1443,13 +1434,10 @@ fun MainAppScreen(
                     }
                 }
             },
-            confirmButton = {
-                Button(onClick = { activeTraceRecord = null }) { Text("Close") }
-            }
+            confirmButton = { Button(onClick = { activeTraceRecord = null }) { Text("Close") } }
         )
     }
 
-    // BULK RECEIVED FROM COURT DIALOG
     if (showBulkReceivedDialog) {
         var selectedLocation by remember { mutableStateOf("Listing Seat") }
         var dropdownExpanded by remember { mutableStateOf(false) }
@@ -1506,7 +1494,6 @@ fun MainAppScreen(
         )
     }
 
-    // SET BULK LOCATION DIALOG
     if (showSetLocationDialog) {
         var inputLocText by remember { mutableStateOf("") }
         var changeAffectedDate by remember { mutableStateOf(currentDate) }
@@ -1555,7 +1542,6 @@ fun MainAppScreen(
         )
     }
 
-    // ADD CASE META-DATA MODAL
     targetFileForMetaData?.let { record ->
         AddCaseMetaDataDialog(
             record = record,
@@ -1570,7 +1556,6 @@ fun MainAppScreen(
         )
     }
 
-    // FLUSH CAUSE LIST DATA DIALOG
     if (showFlushDialog) {
         var cutoffDateInput by remember { mutableStateOf(currentDate) }
         AlertDialog(
@@ -1578,7 +1563,7 @@ fun MainAppScreen(
             title = { Text("Flush Ephemeral Cause List Data") },
             text = {
                 Column {
-                    Text("Delete parsed Cause List PDFs on or before date.\n\nAll dispatched case files, locations, reports, and legacy data remain untouched.", fontSize = 12.sp)
+                    Text("Delete parsed Cause List PDFs on or before date.\n\nDispatched cases, locations, reports, and legacy data remain untouched.", fontSize = 12.sp)
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = cutoffDateInput,
@@ -1621,10 +1606,10 @@ fun CaseCardWithMeta(
                 }
             }
             Text("Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
-            if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
+            if (record.storageLocation.isNotBlank()) Text("📍 Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
+            if (record.remarks.isNotBlank()) Text("📝 Remarks: ${record.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
             if (record.reportsOnRecord.isNotBlank()) Text("📑 Reports: ${record.reportsOnRecord.replace("\n", ", ")}", fontSize = 11.sp, color = Color(0xFF1565C0))
             if (record.applicationsOnRecord.isNotBlank()) Text("📋 Apps: ${record.applicationsOnRecord}", fontSize = 11.sp, color = Color(0xFF6A1B9A))
-            if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
                 OutlinedButton(onClick = onAddMeta) { Text("Meta-Data", fontSize = 11.sp) }
@@ -1635,8 +1620,7 @@ fun CaseCardWithMeta(
 }
 
 /**
- * In-App Cause List Case Status Portal with Window Popup Handling,
- * Native Session Cookie Forwarding, and Reliable Judgment PDF Rendering
+ * Dedicated In-App Cause List Case Status Portal with Verified Judgment Stream Interception
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -1645,7 +1629,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     var activePdfUrl by remember { mutableStateOf<String?>(null) }
     var isLoading by remember { mutableStateOf(false) }
 
-    // Find in Page States
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var activeMatchIndex by remember { mutableStateOf(0) }
@@ -1665,7 +1648,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Top Action Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1696,23 +1678,13 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                     Icon(Icons.Default.Search, contentDescription = "Find in page")
                 }
             }
-            OutlinedButton(onClick = onNavigateBack) {
-                Text("Exit Portal", fontSize = 12.sp)
-            }
+            OutlinedButton(onClick = onNavigateBack) { Text("Exit Portal", fontSize = 12.sp) }
         }
 
-        // Find in Page Panel
         if (isSearchActive) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 4.dp),
-                elevation = CardDefaults.cardElevation(4.dp)
-            ) {
+            Card(modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp), elevation = CardDefaults.cardElevation(4.dp)) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
@@ -1720,9 +1692,8 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                         value = searchQuery,
                         onValueChange = { query ->
                             searchQuery = query
-                            if (query.isNotBlank()) {
-                                webView?.findAllAsync(query)
-                            } else {
+                            if (query.isNotBlank()) webView?.findAllAsync(query)
+                            else {
                                 webView?.clearMatches()
                                 totalMatches = 0
                                 activeMatchIndex = 0
@@ -1734,27 +1705,15 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                     )
 
                     if (totalMatches > 0) {
-                        Text(
-                            text = "${activeMatchIndex + 1}/$totalMatches",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Text(text = "${activeMatchIndex + 1}/$totalMatches", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
-                    IconButton(
-                        enabled = totalMatches > 0,
-                        onClick = { webView?.findNext(false) }
-                    ) {
+                    IconButton(enabled = totalMatches > 0, onClick = { webView?.findNext(false) }) {
                         Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Previous")
                     }
-
-                    IconButton(
-                        enabled = totalMatches > 0,
-                        onClick = { webView?.findNext(true) }
-                    ) {
+                    IconButton(enabled = totalMatches > 0, onClick = { webView?.findNext(true) }) {
                         Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next")
                     }
-
                     IconButton(onClick = {
                         isSearchActive = false
                         webView?.clearMatches()
@@ -1774,12 +1733,8 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
+                        layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
 
-                        // Enable scrolling, pan, and viewport zoom
                         isVerticalScrollBarEnabled = true
                         isHorizontalScrollBarEnabled = true
                         isScrollbarFadingEnabled = false
@@ -1799,7 +1754,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             displayZoomControls = false
                             setSupportZoom(true)
                             javaScriptCanOpenWindowsAutomatically = true
-                            setSupportMultipleWindows(true) // Required for window.open / target="_blank"
+                            setSupportMultipleWindows(true)
                         }
 
                         setFindListener { activeIndex, matchCount, _ ->
@@ -1807,7 +1762,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             totalMatches = matchCount
                         }
 
-                        // Intercept target="_blank" popups used by captcha judgment links
                         webChromeClient = object : WebChromeClient() {
                             override fun onCreateWindow(
                                 view: WebView?,
@@ -1832,14 +1786,8 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                         }
 
                         webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                                isLoading = true
-                            }
-
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                isLoading = false
-                            }
-
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) { isLoading = true }
+                            override fun onPageFinished(view: WebView?, url: String?) { isLoading = false }
                             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                 val url = request?.url?.toString() ?: return false
                                 val lower = url.lowercase()
@@ -1851,7 +1799,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             }
                         }
 
-                        // Intercept direct file streams
                         setDownloadListener { url, _, _, mimeType, _ ->
                             if (url.contains("pdf", ignoreCase = true) || mimeType.equals("application/pdf", ignoreCase = true)) {
                                 activePdfUrl = url
@@ -1865,7 +1812,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Floating Navigation Overlay for smooth manual scrolling
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -1903,7 +1849,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 }
             }
 
-            // In-Memory PDF Dialog
             activePdfUrl?.let { url ->
                 EphemeralPdfViewerDialog(pdfUrl = url, onDismiss = { activePdfUrl = null })
             }
@@ -1912,8 +1857,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
 }
 
 /**
- * Ephemeral In-Memory PDF Dialog:
- * Forwards active browser session cookies and headers so captcha verification isn't lost.
+ * Ephemeral In-Memory PDF Dialog with Native Renderer & System Intent Fallback
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1948,7 +1892,6 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
                 conn.connectTimeout = 20000
                 conn.readTimeout = 20000
 
-                // Pass active portal cookies so the server recognizes the solved captcha session
                 val cookies = CookieManager.getInstance().getCookie(pdfUrl)
                 if (!cookies.isNullOrBlank()) {
                     conn.setRequestProperty("Cookie", cookies)
@@ -1964,31 +1907,48 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
                     FileOutputStream(target).use { output -> input.copyTo(output) }
                 }
 
-                // Verify the file has content and is a valid PDF
                 if (!target.exists() || target.length() < 100) {
-                    throw IllegalStateException("Downloaded file is empty or captcha session expired.")
+                    throw IllegalStateException("Empty response received.")
                 }
 
-                val pfd = ParcelFileDescriptor.open(target, ParcelFileDescriptor.MODE_READ_ONLY)
-                val renderer = PdfRenderer(pfd)
-                val bitmaps = mutableListOf<Bitmap>()
-                for (i in 0 until renderer.pageCount) {
-                    val page = renderer.openPage(i)
-                    val bmp = Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888)
-                    page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                    bitmaps.add(bmp)
-                    page.close()
-                }
-                renderer.close()
-                pfd.close()
+                try {
+                    val pfd = ParcelFileDescriptor.open(target, ParcelFileDescriptor.MODE_READ_ONLY)
+                    val renderer = PdfRenderer(pfd)
+                    val bitmaps = mutableListOf<Bitmap>()
+                    for (i in 0 until renderer.pageCount) {
+                        val page = renderer.openPage(i)
+                        val bmp = Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888)
+                        page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        bitmaps.add(bmp)
+                        page.close()
+                    }
+                    renderer.close()
+                    pfd.close()
 
-                withContext(Dispatchers.Main) {
-                    pageBitmaps = bitmaps
-                    isLoading = false
+                    withContext(Dispatchers.Main) {
+                        pageBitmaps = bitmaps
+                        isLoading = false
+                    }
+                } catch (renderError: Exception) {
+                    // Fallback to system external PDF Viewer
+                    withContext(Dispatchers.Main) {
+                        try {
+                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", target)
+                            val intent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "application/pdf")
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Open Judgment With:"))
+                            onDismiss()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Could not open document viewer.", Toast.LENGTH_SHORT).show()
+                            onDismiss()
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Could not open document: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(context, "Download Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                     cleanupFile()
                     onDismiss()
                 }
@@ -2023,7 +1983,7 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         CircularProgressIndicator()
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("Fetching authenticated PDF judgment...", fontSize = 12.sp)
+                        Text("Fetching authenticated judgment PDF...", fontSize = 12.sp)
                     }
                 } else {
                     LazyColumn(
@@ -2046,7 +2006,6 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
         }
     }
 }
-
 
 /**
  * Add Cause List In-App Web View with Detection Confirmation
@@ -2110,7 +2069,7 @@ fun CauseListIngestionWebView(courtNo: String, date: String, causeListDao: Cause
         AlertDialog(
             onDismissRequest = { pendingPdfUrl = null },
             title = { Text("Do You Wish to add this PDF?") },
-            text = { Text("Parse all serial numbers, case numbers, counsels, and connected cases for Court $courtNo on $date?", fontSize = 12.sp) },
+            text = { Text("Parse all serial numbers, status tags, case numbers, and party names for Court $courtNo on $date?", fontSize = 12.sp) },
             confirmButton = {
                 Button(onClick = {
                     val pdfToParse = url
@@ -2196,23 +2155,11 @@ fun AddCaseMetaDataDialog(record: FileRecord, onDismiss: () -> Unit, onSave: (Fi
                     if (selectedReportOption == "Other Report") {
                         OutlinedTextField(value = customReportText, onValueChange = { customReportText = it }, label = { Text("Specify Description") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
                     }
-                    OutlinedTextField(value = reportDateInput, onValueChange = { reportDateInput = it }, label = { Text("Report Date (Optional e.g. 18-09-26)") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+                    OutlinedTextField(value = reportDateInput, onValueChange = { reportDateInput = it }, label = { Text("Report Date (Optional e.g. 21-09-26)") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
                 } else {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = appNoInput,
-                            onValueChange = { appNoInput = it },
-                            label = { Text("App No (e.g. 9)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = appYearInput,
-                            onValueChange = { appYearInput = it },
-                            label = { Text("Year (e.g. 2026)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f)
-                        )
+                        OutlinedTextField(value = appNoInput, onValueChange = { appNoInput = it }, label = { Text("App No (e.g. 9)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                        OutlinedTextField(value = appYearInput, onValueChange = { appYearInput = it }, label = { Text("Year (e.g. 2026)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                     }
                     Text("Format: [App No]/[Year]", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
                 }
