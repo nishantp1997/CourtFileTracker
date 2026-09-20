@@ -4,10 +4,8 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.Bundle
-import android.os.ParcelFileDescriptor
 import android.util.Base64
 import android.view.ViewGroup
 import android.webkit.*
@@ -97,10 +95,10 @@ fun normalizeSearchQuery(input: String): String = input.trim()
 fun stripLeadingZeros(input: String): String = input.trim().trimStart('0').ifEmpty { "0" }
 
 /**
- * Historical Dispatch Tracking Engine
- * Extracts all distinct courts to which a file was dispatched on targetDate.
- * Scans the entire historyLog for [$targetDate] dispatch entries, inspects dispatchDatesCsv,
- * and checks the active record state.
+ * Multi-Date Historical Dispatch Tracking Engine
+ * Accurately parses all dispatch events for a target date out of the file's historyLog,
+ * cross-checks dispatchDatesCsv, and checks active dispatchDate.
+ * Ensures a file dispatched multiple times across different dates appears on every date it was sent.
  */
 fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<String> {
     val courtsFound = mutableSetOf<String>()
@@ -170,7 +168,6 @@ fun MainAppScreen(
 
     var currentView by remember { mutableStateOf("MAIN") }
 
-    // Core Form States
     var selectedMode by remember { mutableStateOf("Dispatched") }
     var dispatchDateInput by remember { mutableStateOf(currentDate) }
     var courtNoInput by remember { mutableStateOf("") }
@@ -181,7 +178,6 @@ fun MainAppScreen(
     var remarksInput by remember { mutableStateOf("") }
     var judgeNameInput by remember { mutableStateOf("") }
 
-    // Search Engine States
     var activeSearchOption by remember { mutableStateOf("NONE") }
     var searchDateInput by remember { mutableStateOf(currentDate) }
     var searchSelectedCourt by remember { mutableStateOf<String?>(null) }
@@ -194,24 +190,20 @@ fun MainAppScreen(
     var searchStatusOption by remember { mutableStateOf("Dispatched") }
     var searchDateInterlocator by remember { mutableStateOf("") }
 
-    // Bulk Operations
     var bulkDateInput by remember { mutableStateOf(currentDate) }
     var bulkSelectedCourtChip by remember { mutableStateOf<String?>(null) }
     var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
     var selectedFileIds by remember { mutableStateOf(setOf<Long>()) }
     var showBulkReceivedDialog by remember { mutableStateOf(false) }
 
-    // Bulk Location
     var bulkLocationCategory by remember { mutableStateOf("PASS_OVER") }
     var bulkLocSelectedIds by remember { mutableStateOf(setOf<Long>()) }
     var showSetLocationDialog by remember { mutableStateOf(false) }
 
-    // Reports Engine
     var reportTargetFileNo by remember { mutableStateOf("") }
     var reportTargetDate by remember { mutableStateOf(currentDate) }
     var reportSelectedCourtChip by remember { mutableStateOf<String?>(null) }
 
-    // Cause List States
     var addClCourtInput by remember { mutableStateOf("") }
     var addClDateInput by remember { mutableStateOf(currentDate) }
     var isClWebActive by remember { mutableStateOf(false) }
@@ -219,7 +211,6 @@ fun MainAppScreen(
     var selectedClCourtChip by remember { mutableStateOf<String?>(null) }
     var clSearchQuery by remember { mutableStateOf("") }
 
-    // Dialog States
     var activeTraceRecord by remember { mutableStateOf<FileRecord?>(null) }
     var activeUpdateRecord by remember { mutableStateOf<FileRecord?>(null) }
     var targetFileForMetaData by remember { mutableStateOf<FileRecord?>(null) }
@@ -231,7 +222,6 @@ fun MainAppScreen(
     val normalizedSearchFileNo = remember(searchFileNoInput) { normalizeSearchQuery(searchFileNoInput) }
     val normalizedInterlocatorDate = remember(searchDateInterlocator) { if (searchDateInterlocator.isBlank()) "" else normalizeDate(searchDateInterlocator) }
 
-    // Startup sanitation to eliminate any lingering uncommitted Cause List records
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
             val records = dao.getAllRecords().first()
@@ -253,25 +243,21 @@ fun MainAppScreen(
 
     val allDbRecords by dao.getAllRecords().collectAsState(initial = emptyList())
 
-    // Courts with dispatch events on normalizedSearchDate
     val searchCourtsList = remember(allDbRecords, normalizedSearchDate) {
         allDbRecords.flatMap { getDispatchedCourtsForDate(it, normalizedSearchDate) }
             .distinct()
             .sortedBy { it.toIntOrNull() ?: 999 }
     }
-
     val searchCourtFiles = remember(allDbRecords, searchSelectedCourt, normalizedSearchDate) {
         if (searchSelectedCourt == null) emptyList()
         else allDbRecords.filter { wasDispatchedToCourtOnDate(it, normalizedSearchDate, searchSelectedCourt!!) }
     }
 
-    // Courts with dispatch events on normalizedBulkDate
     val bulkCourtsList = remember(allDbRecords, normalizedBulkDate) {
         allDbRecords.flatMap { getDispatchedCourtsForDate(it, normalizedBulkDate) }
             .distinct()
             .sortedBy { it.toIntOrNull() ?: 999 }
     }
-
     val bulkCourtFiles = remember(allDbRecords, bulkSelectedCourtChip, normalizedBulkDate) {
         if (bulkSelectedCourtChip == null) emptyList()
         else allDbRecords.filter { wasDispatchedToCourtOnDate(it, normalizedBulkDate, bulkSelectedCourtChip!!) }
@@ -282,7 +268,6 @@ fun MainAppScreen(
             .distinct()
             .sortedBy { it.toIntOrNull() ?: 999 }
     }
-
     val reportCourtFiles = remember(allDbRecords, reportSelectedCourtChip, normalizedReportDate) {
         if (reportSelectedCourtChip == null) emptyList()
         else allDbRecords.filter { wasDispatchedToCourtOnDate(it, normalizedReportDate, reportSelectedCourtChip!!) }
@@ -293,7 +278,7 @@ fun MainAppScreen(
     val takenUpFiles = remember(allDbRecords) { allDbRecords.filter { it.status == "Taken Up" } }
 
     val advancedSearchResults = remember(
-        allDbRecords, searchCategory, searchLocOption, searchCustomLocText,
+        allDbRecords, searchCategory, searchLocOption, searchCustomLocText, 
         searchJudgeTextInput, searchRemarksTextInput, searchStatusOption, normalizedInterlocatorDate
     ) {
         allDbRecords.filter { rec ->
@@ -369,29 +354,23 @@ fun MainAppScreen(
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                     NavigationDrawerItem(
-                        label = { Text("Registration / Re-Dispatch") },
-                        selected = currentView == "MAIN",
-                        onClick = { currentView = "MAIN"; scope.launch { drawerState.close() } },
-                        icon = { Icon(Icons.Default.Edit, contentDescription = null) }
-                    )
-                    NavigationDrawerItem(
                         label = { Text("Filter / Search Records") },
                         selected = currentView == "SEARCH_MENU",
-                        onClick = {
+                        onClick = { 
                             currentView = "SEARCH_MENU"
                             activeSearchOption = "NONE"
                             searchSelectedCourt = null
-                            scope.launch { drawerState.close() }
+                            scope.launch { drawerState.close() } 
                         },
                         icon = { Icon(Icons.Default.Search, contentDescription = null) }
                     )
                     NavigationDrawerItem(
                         label = { Text("Bulk Operations") },
                         selected = currentView == "BULK",
-                        onClick = {
+                        onClick = { 
                             currentView = "BULK"
                             bulkSelectedCourtChip = null
-                            scope.launch { drawerState.close() }
+                            scope.launch { drawerState.close() } 
                         },
                         icon = { Icon(Icons.Default.List, contentDescription = null) }
                     )
@@ -406,7 +385,7 @@ fun MainAppScreen(
                         icon = { Icon(Icons.Default.Place, contentDescription = null) }
                     )
                     NavigationDrawerItem(
-                        label = { Text("Cause List with Case Status") },
+                        label = { Text("Cause List Portal") },
                         selected = currentView == "CAUSE_LIST_PORTAL",
                         onClick = {
                             currentView = "CAUSE_LIST_PORTAL"
@@ -417,29 +396,29 @@ fun MainAppScreen(
                     NavigationDrawerItem(
                         label = { Text("Add Cause List (From Web)") },
                         selected = currentView == "ADD_CAUSE_LIST",
-                        onClick = {
+                        onClick = { 
                             currentView = "ADD_CAUSE_LIST"
                             isClWebActive = false
-                            scope.launch { drawerState.close() }
+                            scope.launch { drawerState.close() } 
                         },
                         icon = { Icon(Icons.Default.AddCircle, contentDescription = null) }
                     )
                     NavigationDrawerItem(
                         label = { Text("Dispatch from Cause List") },
                         selected = currentView == "DISPATCH_CAUSE_LIST",
-                        onClick = {
+                        onClick = { 
                             currentView = "DISPATCH_CAUSE_LIST"
-                            scope.launch { drawerState.close() }
+                            scope.launch { drawerState.close() } 
                         },
                         icon = { Icon(Icons.Default.CheckCircle, contentDescription = null) }
                     )
                     NavigationDrawerItem(
                         label = { Text("PDF Reports Engine") },
                         selected = currentView == "REPORTS_PANEL",
-                        onClick = {
+                        onClick = { 
                             currentView = "REPORTS_PANEL"
                             reportSelectedCourtChip = null
-                            scope.launch { drawerState.close() }
+                            scope.launch { drawerState.close() } 
                         },
                         icon = { Icon(Icons.Default.Share, contentDescription = null) }
                     )
@@ -449,9 +428,8 @@ fun MainAppScreen(
                         onClick = { showFlushDialog = true; scope.launch { drawerState.close() } },
                         icon = { Icon(Icons.Default.Delete, contentDescription = null) }
                     )
-
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
+                    
                     NavigationDrawerItem(
                         label = { Text("Send Backup to WhatsApp") },
                         selected = false,
@@ -522,7 +500,7 @@ fun MainAppScreen(
                     },
                     navigationIcon = {
                         if (currentView != "MAIN") {
-                            IconButton(onClick = {
+                            IconButton(onClick = { 
                                 currentView = "MAIN"
                                 activeSearchOption = "NONE"
                                 searchSelectedCourt = null
@@ -593,8 +571,8 @@ fun MainAppScreen(
                         Column(modifier = Modifier.fillMaxSize()) {
                             OutlinedTextField(
                                 value = dispatchClDateInput,
-                                onValueChange = {
-                                    dispatchClDateInput = it
+                                onValueChange = { 
+                                    dispatchClDateInput = it 
                                     selectedClCourtChip = null
                                 },
                                 label = { Text("Cause List Date (dd-MM-yy)") },
@@ -674,7 +652,6 @@ fun MainAppScreen(
                                                 }
 
                                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
-                                                    // In-memory draft prevents accidental database insertion
                                                     OutlinedButton(onClick = {
                                                         scope.launch {
                                                             val existing = dao.getRecordByFileNo(clRecord.fileNo)
@@ -904,12 +881,30 @@ fun MainAppScreen(
                                     } else {
                                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             items(advancedSearchResults) { record ->
-                                                CaseCardWithMeta(
-                                                    record = record,
-                                                    onClick = { activeTraceRecord = record },
-                                                    onUpdate = { activeUpdateRecord = record },
-                                                    onAddMeta = { targetFileForMetaData = record }
-                                                )
+                                                Card(
+                                                    modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
+                                                    colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
+                                                ) {
+                                                    Column(modifier = Modifier.padding(12.dp)) {
+                                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                            Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                                            Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
+                                                                Text(record.status, color = Color.White)
+                                                            }
+                                                        }
+                                                        Text("Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
+                                                        if (record.judgeName.isNotBlank()) Text("Judge: ${record.judgeName}", fontSize = 12.sp, color = Color(0xFF9C27B0))
+                                                        if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
+                                                        if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+
+                                                        Button(
+                                                            onClick = { activeUpdateRecord = record },
+                                                            modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
+                                                        ) {
+                                                            Text("Update Status")
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -941,12 +936,30 @@ fun MainAppScreen(
                                         Text("Files Dispatched to Court $searchSelectedCourt on $normalizedSearchDate (${searchCourtFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
                                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             items(searchCourtFiles) { record ->
-                                                CaseCardWithMeta(
-                                                    record = record,
-                                                    onClick = { activeTraceRecord = record },
-                                                    onUpdate = { activeUpdateRecord = record },
-                                                    onAddMeta = { targetFileForMetaData = record }
-                                                )
+                                                val courtForThisDate = getDispatchedCourtForDate(record, normalizedSearchDate)
+                                                Card(
+                                                    modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
+                                                    colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
+                                                ) {
+                                                    Column(modifier = Modifier.padding(12.dp)) {
+                                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                            Text("File: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                                            Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
+                                                                Text(record.status, color = Color.White)
+                                                            }
+                                                        }
+                                                        Text("Dispatched Court on $normalizedSearchDate: Court $courtForThisDate", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                                        Text("Current Status: ${record.status} | Location: ${record.storageLocation.ifEmpty { "N/A" }}", fontSize = 12.sp)
+                                                        if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+
+                                                        Button(
+                                                            onClick = { activeUpdateRecord = record },
+                                                            modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
+                                                        ) {
+                                                            Text("Update Status")
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -958,34 +971,41 @@ fun MainAppScreen(
                                         onValueChange = { searchFileNoInput = it },
                                         label = { Text("Enter File Number (e.g. 123/2026)") },
                                         leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                                        trailingIcon = {
-                                            if (searchFileNoInput.isNotEmpty()) {
-                                                IconButton(onClick = { searchFileNoInput = "" }) {
-                                                    Icon(Icons.Default.Close, contentDescription = "Clear")
+                                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                                    )
+
+                                    if (searchFileNoInput.isBlank()) {
+                                        Text("Please enter a file number above to search.", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
+                                    } else {
+                                        Text("Matching Files (${fileNoSearchResults.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
+                                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            items(fileNoSearchResults) { record ->
+                                                Card(
+                                                    modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
+                                                    colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
+                                                ) {
+                                                    Column(modifier = Modifier.padding(12.dp)) {
+                                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                            Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                                            Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
+                                                                Text(record.status, color = Color.White)
+                                                            }
+                                                        }
+                                                        Text("All Dates: ${record.dispatchDatesCsv}", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                                        Text("Court: ${record.courtNo} | Serial: ${record.serialNo}", fontSize = 12.sp)
+                                                        if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp)
+                                                        if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+
+                                                        Button(
+                                                            onClick = { activeUpdateRecord = record },
+                                                            modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
+                                                        ) {
+                                                            Text("Update Status")
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
-                                    )
-
-                                    val activeResults = remember(fileNoSearchResults, normalizedSearchFileNo) {
-                                        if (normalizedSearchFileNo.isBlank()) emptyList() else fileNoSearchResults
-                                    }
-
-                                    if (normalizedSearchFileNo.isNotBlank()) {
-                                        Text("Matching Files (${activeResults.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
-                                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            items(activeResults) { record ->
-                                                CaseCardWithMeta(
-                                                    record = record,
-                                                    onClick = { activeTraceRecord = record },
-                                                    onUpdate = { activeUpdateRecord = record },
-                                                    onAddMeta = { targetFileForMetaData = record }
-                                                )
-                                            }
-                                        }
-                                    } else {
-                                        Text("Please enter a file number above to search.", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
                                     }
                                 }
 
@@ -993,12 +1013,28 @@ fun MainAppScreen(
                                     Text("All In Chamber Files (${chamberFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
                                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         items(chamberFiles) { record ->
-                                            CaseCardWithMeta(
-                                                record = record,
-                                                onClick = { activeTraceRecord = record },
-                                                onUpdate = { activeUpdateRecord = record },
-                                                onAddMeta = { targetFileForMetaData = record }
-                                            )
+                                            Card(
+                                                modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
+                                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                            ) {
+                                                Column(modifier = Modifier.padding(12.dp)) {
+                                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                        Text("File: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                                        Badge(containerColor = Color(0xFF9C27B0)) {
+                                                            Text("Chamber: ${record.judgeName.ifEmpty { "Hon'ble Judge" }}", color = Color.White)
+                                                        }
+                                                    }
+                                                    Text("Last Date: ${record.dispatchDate}", fontSize = 12.sp)
+                                                    if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+
+                                                    Button(
+                                                        onClick = { activeUpdateRecord = record },
+                                                        modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
+                                                    ) {
+                                                        Text("Update Status")
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1007,12 +1043,29 @@ fun MainAppScreen(
                                     Text("All Currently 'Taken Up' Files (${takenUpFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
                                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         items(takenUpFiles) { record ->
-                                            CaseCardWithMeta(
-                                                record = record,
-                                                onClick = { activeTraceRecord = record },
-                                                onUpdate = { activeUpdateRecord = record },
-                                                onAddMeta = { targetFileForMetaData = record }
-                                            )
+                                            Card(
+                                                modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
+                                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                            ) {
+                                                Column(modifier = Modifier.padding(12.dp)) {
+                                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                        Text("File: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                                        Badge(containerColor = MaterialTheme.colorScheme.primary) {
+                                                            Text(record.status, color = Color.White)
+                                                        }
+                                                    }
+                                                    Text("Court No: ${record.courtNo} | Serial: ${record.serialNo}", fontSize = 12.sp)
+                                                    if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
+                                                    if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
+
+                                                    Button(
+                                                        onClick = { activeUpdateRecord = record },
+                                                        modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
+                                                    ) {
+                                                        Text("Update Status")
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1024,87 +1077,195 @@ fun MainAppScreen(
                         }
                     }
 
-                    "BULK" -> {
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            Text("Bulk Operations", fontWeight = FontWeight.Bold)
+                    "REPORTS_PANEL" -> {
+                        Text("PDF Reports & Data Recovery:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp))
 
-                            OutlinedTextField(
-                                value = bulkDateInput,
-                                onValueChange = {
-                                    bulkDateInput = it
-                                    bulkSelectedCourtChip = null
-                                    selectedFileIds = emptySet()
-                                },
-                                label = { Text("Enter Dispatch Date") },
-                                leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                            )
-
-                            Text("Dispatched Courts on $normalizedBulkDate (${bulkCourtsList.size}):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                bulkCourtsList.forEach { court ->
-                                    FilterChip(
-                                        selected = bulkSelectedCourtChip == court,
-                                        onClick = {
-                                            bulkSelectedCourtChip = if (bulkSelectedCourtChip == court) null else court
-                                            selectedFileIds = emptySet()
-                                        },
-                                        label = { Text("Court $court") }
-                                    )
+                        Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("1. Export Master Database PDF", fontWeight = FontWeight.Bold)
+                                Button(
+                                    onClick = {
+                                        scope.launch {
+                                            val snapshot = dao.getAllRecords().first()
+                                            PdfReportGenerator.generateMasterReport(context, snapshot)
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                                ) {
+                                    Text("EXPORT MASTER LEDGER PDF")
                                 }
                             }
+                        }
 
-                            if (bulkSelectedCourtChip == null) {
-                                Text("Please select a Court Number chip above to proceed with bulk updates.", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
-                            } else {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
-                                    Button(onClick = { selectedFileIds = bulkCourtFiles.map { it.id }.toSet() }) { Text("Select All") }
-                                    Button(onClick = { selectedFileIds = emptySet() }) { Text("Clear All") }
-                                }
-
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(bottom = 8.dp)) {
-                                    FilterChip(selected = bulkTargetStatus == "Taken Up", onClick = { bulkTargetStatus = "Taken Up" }, label = { Text("Taken Up") })
-                                    FilterChip(selected = bulkTargetStatus == "Received from Court", onClick = { bulkTargetStatus = "Received from Court" }, label = { Text("Received") })
-                                    FilterChip(selected = bulkTargetStatus == "Pass Over", onClick = { bulkTargetStatus = "Pass Over" }, label = { Text("Pass Over") })
-                                }
-
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("2. Rebuild Database from Master PDF", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                Text("Restores all cases and audit logs directly from an exported Master Ledger PDF file.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
                                 Button(
-                                    enabled = selectedFileIds.isNotEmpty(),
                                     onClick = {
-                                        if (bulkTargetStatus == "Received from Court") {
-                                            showBulkReceivedDialog = true
-                                        } else {
-                                            scope.launch {
-                                                val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
-                                                val updatedList = selectedRecords.map { rec ->
-                                                    rec.copy(
-                                                        status = bulkTargetStatus,
-                                                        storageLocation = "",
-                                                        historyLog = "${rec.historyLog}\n[$normalizedBulkDate] Bulk Status changed to '$bulkTargetStatus'"
-                                                    )
-                                                }
-                                                dao.insertOrUpdateAll(updatedList)
-                                                selectedFileIds = emptySet()
-                                                Toast.makeText(context, "${updatedList.size} Files Updated!", Toast.LENGTH_SHORT).show()
+                                        onPickPdf { uri ->
+                                            PdfImportHelper.restoreDatabaseFromPdf(context, uri, dao) {}
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                                ) {
+                                    Text("IMPORT MASTER PDF & REBUILD DB")
+                                }
+                            }
+                        }
+
+                        Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("3. Particular Case File Report", fontWeight = FontWeight.Bold)
+                                OutlinedTextField(
+                                    value = reportTargetFileNo,
+                                    onValueChange = { reportTargetFileNo = it },
+                                    label = { Text("File Number") },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Button(
+                                    onClick = {
+                                        scope.launch {
+                                            val cleanTarget = stripLeadingZeros(reportTargetFileNo)
+                                            val rec = dao.getRecordByFileNo(cleanTarget)
+                                            if (rec != null) {
+                                                PdfReportGenerator.generateSingleFileReport(context, rec)
+                                            } else {
+                                                Toast.makeText(context, "File Not Found!", Toast.LENGTH_SHORT).show()
                                             }
                                         }
                                     },
-                                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                                 ) {
-                                    Text("BATCH UPDATE ${selectedFileIds.size} FILES IN COURT $bulkSelectedCourtChip")
+                                    Text("EXPORT SINGLE CASE FILE PDF")
+                                }
+                            }
+                        }
+
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("4. Date & Court Number Wise Report", fontWeight = FontWeight.Bold)
+                                OutlinedTextField(
+                                    value = reportTargetDate,
+                                    onValueChange = { 
+                                        reportTargetDate = it 
+                                        reportSelectedCourtChip = null
+                                    },
+                                    label = { Text("Enter Target Date") },
+                                    leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                                )
+
+                                Text("Dispatched Courts on $normalizedReportDate (${reportCourtsList.size}):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    reportCourtsList.forEach { court ->
+                                        FilterChip(
+                                            selected = reportSelectedCourtChip == court,
+                                            onClick = { reportSelectedCourtChip = if (reportSelectedCourtChip == court) null else court },
+                                            label = { Text("Court $court") }
+                                        )
+                                    }
                                 }
 
-                                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    items(bulkCourtFiles) { record ->
-                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                                            Checkbox(
-                                                checked = selectedFileIds.contains(record.id),
-                                                onCheckedChange = { isChecked ->
-                                                    selectedFileIds = if (isChecked) selectedFileIds + record.id else selectedFileIds - record.id
-                                                }
-                                            )
-                                            Text("${record.fileNo} (${record.serialNo}) - Status: ${record.status}")
+                                Button(
+                                    enabled = reportSelectedCourtChip != null,
+                                    onClick = {
+                                        scope.launch {
+                                            val selectedCourt = reportSelectedCourtChip!!
+                                            PdfReportGenerator.generateDateCourtReport(context, normalizedReportDate, selectedCourt, reportCourtFiles)
                                         }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                                ) {
+                                    Text(if (reportSelectedCourtChip == null) "SELECT A COURT CHIP ABOVE" else "EXPORT COURT $reportSelectedCourtChip DISPATCH PDF")
+                                }
+                            }
+                        }
+                    }
+
+                    "BULK" -> {
+                        Text("Bulk Operations", fontWeight = FontWeight.Bold)
+
+                        OutlinedTextField(
+                            value = bulkDateInput,
+                            onValueChange = { 
+                                bulkDateInput = it 
+                                bulkSelectedCourtChip = null
+                                selectedFileIds = emptySet()
+                            },
+                            label = { Text("Enter Dispatch Date") },
+                            leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+                        )
+
+                        Text("Dispatched Courts on $normalizedBulkDate (${bulkCourtsList.size}):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            bulkCourtsList.forEach { court ->
+                                FilterChip(
+                                    selected = bulkSelectedCourtChip == court,
+                                    onClick = { 
+                                        bulkSelectedCourtChip = if (bulkSelectedCourtChip == court) null else court
+                                        selectedFileIds = emptySet()
+                                    },
+                                    label = { Text("Court $court") }
+                                )
+                            }
+                        }
+
+                        if (bulkSelectedCourtChip == null) {
+                            Text("Please select a Court Number chip above to proceed with bulk updates.", fontSize = 12.sp, color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
+                        } else {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 8.dp)) {
+                                Button(onClick = { selectedFileIds = bulkCourtFiles.map { it.id }.toSet() }) { Text("Select All") }
+                                Button(onClick = { selectedFileIds = emptySet() }) { Text("Clear All") }
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(bottom = 8.dp)) {
+                                FilterChip(selected = bulkTargetStatus == "Taken Up", onClick = { bulkTargetStatus = "Taken Up" }, label = { Text("Taken Up") })
+                                FilterChip(selected = bulkTargetStatus == "Received from Court", onClick = { bulkTargetStatus = "Received from Court" }, label = { Text("Received") })
+                                FilterChip(selected = bulkTargetStatus == "Pass Over", onClick = { bulkTargetStatus = "Pass Over" }, label = { Text("Pass Over") })
+                            }
+
+                            Button(
+                                enabled = selectedFileIds.isNotEmpty(),
+                                onClick = {
+                                    if (bulkTargetStatus == "Received from Court") {
+                                        showBulkReceivedDialog = true
+                                    } else {
+                                        scope.launch {
+                                            val selectedRecords = bulkCourtFiles.filter { selectedFileIds.contains(it.id) }
+                                            val updatedList = selectedRecords.map { rec ->
+                                                rec.copy(
+                                                    status = bulkTargetStatus,
+                                                    storageLocation = "",
+                                                    historyLog = "${rec.historyLog}\n[$normalizedBulkDate] Bulk Status changed to '$bulkTargetStatus'"
+                                                )
+                                            }
+                                            dao.insertOrUpdateAll(updatedList)
+                                            selectedFileIds = emptySet()
+                                            Toast.makeText(context, "${updatedList.size} Files Updated!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                            ) {
+                                Text("BATCH UPDATE ${selectedFileIds.size} FILES IN COURT $bulkSelectedCourtChip")
+                            }
+
+                            LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                items(bulkCourtFiles) { record ->
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                        Checkbox(
+                                            checked = selectedFileIds.contains(record.id),
+                                            onCheckedChange = { isChecked ->
+                                                selectedFileIds = if (isChecked) selectedFileIds + record.id else selectedFileIds - record.id
+                                            }
+                                        )
+                                        Text("${record.fileNo} (${record.serialNo}) - Status: ${record.status}")
                                     }
                                 }
                             }
@@ -1112,208 +1273,100 @@ fun MainAppScreen(
                     }
 
                     "BULK_LOCATION" -> {
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            Text("Select Unassigned Category:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+                        Text("Select Unassigned Category:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
 
-                            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                FilterChip(
-                                    selected = bulkLocationCategory == "PASS_OVER",
-                                    onClick = { bulkLocationCategory = "PASS_OVER"; bulkLocSelectedIds = emptySet() },
-                                    label = { Text("1. Pass Over Files", fontSize = 11.sp) }
-                                )
-                                FilterChip(
-                                    selected = bulkLocationCategory == "NOT_SENT",
-                                    onClick = { bulkLocationCategory = "NOT_SENT"; bulkLocSelectedIds = emptySet() },
-                                    label = { Text("2. Not Sent Files", fontSize = 11.sp) }
-                                )
-                                FilterChip(
-                                    selected = bulkLocationCategory == "RECEIVED",
-                                    onClick = { bulkLocationCategory = "RECEIVED"; bulkLocSelectedIds = emptySet() },
-                                    label = { Text("3. Received Files", fontSize = 11.sp) }
-                                )
+                        Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            FilterChip(
+                                selected = bulkLocationCategory == "PASS_OVER",
+                                onClick = { bulkLocationCategory = "PASS_OVER"; bulkLocSelectedIds = emptySet() },
+                                label = { Text("1. Pass Over Files", fontSize = 11.sp) }
+                            )
+                            FilterChip(
+                                selected = bulkLocationCategory == "NOT_SENT",
+                                onClick = { bulkLocationCategory = "NOT_SENT"; bulkLocSelectedIds = emptySet() },
+                                label = { Text("2. Not Sent Files", fontSize = 11.sp) }
+                            )
+                            FilterChip(
+                                selected = bulkLocationCategory == "RECEIVED",
+                                onClick = { bulkLocationCategory = "RECEIVED"; bulkLocSelectedIds = emptySet() },
+                                label = { Text("3. Received Files", fontSize = 11.sp) }
+                            )
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { bulkLocSelectedIds = bulkLocationFilteredFiles.map { it.id }.toSet() }) {
+                                    Text("Select All", fontSize = 12.sp)
+                                }
+                                Button(onClick = { bulkLocSelectedIds = emptySet() }) {
+                                    Text("Clear All", fontSize = 12.sp)
+                                }
                             }
 
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Button(
+                                enabled = bulkLocSelectedIds.isNotEmpty(),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                onClick = { showSetLocationDialog = true }
                             ) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { bulkLocSelectedIds = bulkLocationFilteredFiles.map { it.id }.toSet() }) {
-                                        Text("Select All", fontSize = 12.sp)
-                                    }
-                                    Button(onClick = { bulkLocSelectedIds = emptySet() }) {
-                                        Text("Clear All", fontSize = 12.sp)
-                                    }
-                                }
-
-                                Button(
-                                    enabled = bulkLocSelectedIds.isNotEmpty(),
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                                    onClick = { showSetLocationDialog = true }
-                                ) {
-                                    Text("Set Location (${bulkLocSelectedIds.size})", fontSize = 12.sp)
-                                }
-                            }
-
-                            Text("Unassigned Files (${bulkLocationFilteredFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
-
-                            if (bulkLocationFilteredFiles.isEmpty()) {
-                                Text(
-                                    "No files found with status '${
-                                        when (bulkLocationCategory) {
-                                            "PASS_OVER" -> "Pass Over"
-                                            "NOT_SENT" -> "Not Sent to Court"
-                                            else -> "Received from Court"
-                                        }
-                                    }' having an empty storage location.",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray,
-                                    modifier = Modifier.padding(top = 16.dp)
-                                )
-                            } else {
-                                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    items(bulkLocationFilteredFiles) { record ->
-                                        Card(
-                                            modifier = Modifier.fillMaxWidth().clickable {
-                                                bulkLocSelectedIds = if (bulkLocSelectedIds.contains(record.id)) bulkLocSelectedIds - record.id else bulkLocSelectedIds + record.id
-                                            },
-                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.padding(8.dp).fillMaxWidth()
-                                            ) {
-                                                Checkbox(
-                                                    checked = bulkLocSelectedIds.contains(record.id),
-                                                    onCheckedChange = { isChecked ->
-                                                        bulkLocSelectedIds = if (isChecked) bulkLocSelectedIds + record.id else bulkLocSelectedIds - record.id
-                                                    }
-                                                )
-                                                Column(modifier = Modifier.padding(start = 8.dp)) {
-                                                    Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                                    Text("Status: ${record.status} | Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
-                                                    if (record.remarks.isNotBlank()) {
-                                                        Text("Remarks: ${record.remarks}", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                Text("Set Location (${bulkLocSelectedIds.size})", fontSize = 12.sp)
                             }
                         }
-                    }
 
-                    "REPORTS_PANEL" -> {
-                        LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            item { Text("PDF Reports & Data Recovery:", fontWeight = FontWeight.Bold, fontSize = 15.sp) }
+                        Text("Unassigned Files (${bulkLocationFilteredFiles.size}):", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
 
-                            item {
-                                Card(modifier = Modifier.fillMaxWidth()) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text("1. Export Master Database PDF", fontWeight = FontWeight.Bold)
-                                        Button(
-                                            onClick = {
-                                                scope.launch {
-                                                    val snapshot = dao.getAllRecords().first()
-                                                    PdfReportGenerator.generateMasterReport(context, snapshot)
-                                                }
-                                            },
-                                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                                        ) { Text("EXPORT MASTER LEDGER PDF") }
+                        if (bulkLocationFilteredFiles.isEmpty()) {
+                            Text(
+                                "No files found with status '${
+                                    when (bulkLocationCategory) {
+                                        "PASS_OVER" -> "Pass Over"
+                                        "NOT_SENT" -> "Not Sent to Court"
+                                        else -> "Received from Court"
                                     }
-                                }
-                            }
-
-                            item {
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-                                ) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text("2. Rebuild Database from Master PDF", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                                        Text("Restores all cases and audit logs directly from an exported Master Ledger PDF file.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                                        Button(
-                                            onClick = {
-                                                onPickPdf { uri ->
-                                                    PdfImportHelper.restoreDatabaseFromPdf(context, uri, dao) {}
-                                                }
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                                        ) { Text("IMPORT MASTER PDF & REBUILD DB") }
-                                    }
-                                }
-                            }
-
-                            item {
-                                Card(modifier = Modifier.fillMaxWidth()) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text("3. Particular Case File Report", fontWeight = FontWeight.Bold)
-                                        OutlinedTextField(
-                                            value = reportTargetFileNo,
-                                            onValueChange = { reportTargetFileNo = it },
-                                            label = { Text("File Number") },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                        Button(
-                                            onClick = {
-                                                scope.launch {
-                                                    val cleanTarget = stripLeadingZeros(reportTargetFileNo)
-                                                    val rec = dao.getRecordByFileNo(cleanTarget)
-                                                    if (rec != null) {
-                                                        PdfReportGenerator.generateSingleFileReport(context, rec)
+                                }' having an empty storage location.",
+                                fontSize = 12.sp,
+                                color = Color.Gray,
+                                modifier = Modifier.padding(top = 16.dp)
+                            )
+                        } else {
+                            LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                items(bulkLocationFilteredFiles) { record ->
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth().clickable {
+                                            bulkLocSelectedIds = if (bulkLocSelectedIds.contains(record.id)) {
+                                                bulkLocSelectedIds - record.id
+                                            } else {
+                                                bulkLocSelectedIds + record.id
+                                            }
+                                        },
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(8.dp).fillMaxWidth()
+                                        ) {
+                                            Checkbox(
+                                                checked = bulkLocSelectedIds.contains(record.id),
+                                                onCheckedChange = { isChecked ->
+                                                    bulkLocSelectedIds = if (isChecked) {
+                                                        bulkLocSelectedIds + record.id
                                                     } else {
-                                                        Toast.makeText(context, "File Not Found!", Toast.LENGTH_SHORT).show()
+                                                        bulkLocSelectedIds - record.id
                                                     }
                                                 }
-                                            },
-                                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                                        ) { Text("EXPORT SINGLE CASE FILE PDF") }
-                                    }
-                                }
-                            }
-
-                            item {
-                                Card(modifier = Modifier.fillMaxWidth()) {
-                                    Column(modifier = Modifier.padding(12.dp)) {
-                                        Text("4. Date & Court Number Wise Report", fontWeight = FontWeight.Bold)
-                                        OutlinedTextField(
-                                            value = reportTargetDate,
-                                            onValueChange = {
-                                                reportTargetDate = it
-                                                reportSelectedCourtChip = null
-                                            },
-                                            label = { Text("Enter Target Date") },
-                                            leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                                        )
-
-                                        Text("Dispatched Courts on $normalizedReportDate (${reportCourtsList.size}):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            reportCourtsList.forEach { court ->
-                                                FilterChip(
-                                                    selected = reportSelectedCourtChip == court,
-                                                    onClick = { reportSelectedCourtChip = if (reportSelectedCourtChip == court) null else court },
-                                                    label = { Text("Court $court") }
-                                                )
-                                            }
-                                        }
-
-                                        Button(
-                                            enabled = reportSelectedCourtChip != null,
-                                            onClick = {
-                                                scope.launch {
-                                                    val selectedCourt = reportSelectedCourtChip!!
-                                                    PdfReportGenerator.generateDateCourtReport(context, normalizedReportDate, selectedCourt, reportCourtFiles)
+                                            )
+                                            Column(modifier = Modifier.padding(start = 8.dp)) {
+                                                Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                                Text("Status: ${record.status} | Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
+                                                if (record.remarks.isNotBlank()) {
+                                                    Text("Remarks: ${record.remarks}", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
                                                 }
-                                            },
-                                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                                        ) {
-                                            Text(if (reportSelectedCourtChip == null) "SELECT A COURT CHIP ABOVE" else "EXPORT COURT $reportSelectedCourtChip DISPATCH PDF (${reportCourtFiles.size} FILES)")
+                                            }
                                         }
                                     }
                                 }
@@ -1323,181 +1376,197 @@ fun MainAppScreen(
 
                     else -> {
                         // MAIN REGISTRATION SCREEN
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), elevation = CardDefaults.cardElevation(4.dp)) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text("Registration / Re-Dispatch", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), elevation = CardDefaults.cardElevation(4.dp)) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text("Registration / Re-Dispatch", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
 
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        FilterChip(selected = selectedMode == "Dispatched", onClick = { selectedMode = "Dispatched" }, label = { Text("Dispatched") })
-                                        FilterChip(selected = selectedMode == "Not Sent", onClick = { selectedMode = "Not Sent" }, label = { Text("Not Sent") })
-                                        FilterChip(selected = selectedMode == "Chamber", onClick = { selectedMode = "Chamber" }, label = { Text("Chamber") })
-                                    }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    FilterChip(selected = selectedMode == "Dispatched", onClick = { selectedMode = "Dispatched" }, label = { Text("Dispatched") })
+                                    FilterChip(selected = selectedMode == "Not Sent", onClick = { selectedMode = "Not Sent" }, label = { Text("Not Sent") })
+                                    FilterChip(selected = selectedMode == "Chamber", onClick = { selectedMode = "Chamber" }, label = { Text("Chamber") })
+                                }
 
+                                OutlinedTextField(
+                                    value = dispatchDateInput,
+                                    onValueChange = { dispatchDateInput = it },
+                                    label = { Text("Dispatch Date") },
+                                    trailingIcon = {
+                                        TextButton(onClick = { dispatchDateInput = currentDate }) {
+                                            Text("Today", fontSize = 11.sp)
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                )
+
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
-                                        value = dispatchDateInput,
-                                        onValueChange = { dispatchDateInput = it },
-                                        label = { Text("Dispatch Date") },
-                                        trailingIcon = {
-                                            TextButton(onClick = { dispatchDateInput = currentDate }) {
-                                                Text("Today", fontSize = 11.sp)
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                        value = fileSerialInput,
+                                        onValueChange = { fileSerialInput = it },
+                                        label = { Text("File Serial No. *") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(1.2f)
                                     )
+                                    OutlinedTextField(
+                                        value = fileYearInput,
+                                        onValueChange = { fileYearInput = it },
+                                        label = { Text("File Year *") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.weight(0.8f)
+                                    )
+                                }
 
+                                if (selectedMode == "Dispatched") {
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         OutlinedTextField(
-                                            value = fileSerialInput,
-                                            onValueChange = { fileSerialInput = it },
-                                            label = { Text("File Serial No. *") },
+                                            value = courtNoInput,
+                                            onValueChange = { courtNoInput = it },
+                                            label = { Text("Court No") },
                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.weight(1.2f)
+                                            modifier = Modifier.weight(1f)
                                         )
                                         OutlinedTextField(
-                                            value = fileYearInput,
-                                            onValueChange = { fileYearInput = it },
-                                            label = { Text("File Year *") },
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            modifier = Modifier.weight(0.8f)
+                                            value = serialNoInput,
+                                            onValueChange = { serialNoInput = it },
+                                            label = { Text("Serial No") },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            modifier = Modifier.weight(1f)
                                         )
                                     }
 
-                                    if (selectedMode == "Dispatched") {
-                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            OutlinedTextField(
-                                                value = courtNoInput,
-                                                onValueChange = { courtNoInput = it },
-                                                label = { Text("Court No") },
-                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                            OutlinedTextField(
-                                                value = serialNoInput,
-                                                onValueChange = { serialNoInput = it },
-                                                label = { Text("Serial No") },
-                                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                        }
-
-                                        Text("List Type", fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            FilterChip(selected = listTypeInput == "DCL", onClick = { listTypeInput = "DCL" }, label = { Text("DCL") })
-                                            FilterChip(selected = listTypeInput == "ACL", onClick = { listTypeInput = "ACL" }, label = { Text("ACL") })
-                                            FilterChip(selected = listTypeInput == "Correction", onClick = { listTypeInput = "Correction" }, label = { Text("Correction") })
-                                        }
-                                    } else if (selectedMode == "Chamber") {
-                                        OutlinedTextField(
-                                            value = judgeNameInput,
-                                            onValueChange = { judgeNameInput = it },
-                                            label = { Text("Hon'ble Judge Name") },
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
+                                    Text("List Type", fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        FilterChip(selected = listTypeInput == "DCL", onClick = { listTypeInput = "DCL" }, label = { Text("DCL") })
+                                        FilterChip(selected = listTypeInput == "ACL", onClick = { listTypeInput = "ACL" }, label = { Text("ACL") })
+                                        FilterChip(selected = listTypeInput == "Correction", onClick = { listTypeInput = "Correction" }, label = { Text("Correction") })
                                     }
-
+                                } else if (selectedMode == "Chamber") {
                                     OutlinedTextField(
-                                        value = remarksInput,
-                                        onValueChange = { remarksInput = it },
-                                        label = { Text("Remarks") },
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                        value = judgeNameInput, 
+                                        onValueChange = { judgeNameInput = it }, 
+                                        label = { Text("Hon'ble Judge Name") }, 
+                                        modifier = Modifier.fillMaxWidth()
                                     )
+                                }
 
-                                    Button(
-                                        onClick = {
-                                            val serialInt = fileSerialInput.trim().toIntOrNull()
-                                            val yearInt = fileYearInput.trim().toIntOrNull()
+                                OutlinedTextField(
+                                    value = remarksInput,
+                                    onValueChange = { remarksInput = it },
+                                    label = { Text("Remarks") },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                )
 
-                                            if (serialInt == null || serialInt <= 0) {
-                                                Toast.makeText(context, "Invalid File Serial Number!", Toast.LENGTH_LONG).show()
-                                                return@Button
+                                Button(
+                                    onClick = {
+                                        val serialInt = fileSerialInput.trim().toIntOrNull()
+                                        val yearInt = fileYearInput.trim().toIntOrNull()
+
+                                        if (serialInt == null || serialInt <= 0) {
+                                            Toast.makeText(context, "Invalid File Serial Number!", Toast.LENGTH_LONG).show()
+                                            return@Button
+                                        }
+
+                                        if (yearInt == null || yearInt < 1970 || yearInt > 2026) {
+                                            Toast.makeText(context, "Invalid File Year!", Toast.LENGTH_LONG).show()
+                                            return@Button
+                                        }
+
+                                        val cleanSerial = stripLeadingZeros(fileSerialInput)
+                                        val cleanYear = fileYearInput.trim()
+                                        val formattedFileNo = "$cleanSerial/$cleanYear"
+                                        val cleanDate = normalizeDate(dispatchDateInput)
+
+                                        if (cleanDate.isBlank()) {
+                                            Toast.makeText(context, "Please enter a valid Dispatch Date", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+                                        if (selectedMode == "Dispatched" && (courtNoInput.isBlank() || serialNoInput.isBlank())) {
+                                            Toast.makeText(context, "Court No and Serial No are required", Toast.LENGTH_SHORT).show()
+                                            return@Button
+                                        }
+
+                                        scope.launch {
+                                            val existing = dao.getRecordByFileNo(formattedFileNo)
+                                            val newStatus = if (selectedMode == "Dispatched") "Dispatched" else if (selectedMode == "Chamber") "Sent to Chamber" else "Not Sent to Court"
+                                            val isChamber = selectedMode == "Chamber"
+                                            val isDispatched = selectedMode == "Dispatched"
+                                            val judge = if (isChamber) judgeNameInput.trim() else ""
+
+                                            val existingCsv = existing?.dispatchDatesCsv ?: ""
+                                            val updatedCsv = when {
+                                                existingCsv.isBlank() -> cleanDate
+                                                existingCsv.contains(cleanDate) -> existingCsv
+                                                else -> "$existingCsv, $cleanDate"
                                             }
 
-                                            if (yearInt == null || yearInt < 1970 || yearInt > 2026) {
-                                                Toast.makeText(context, "Invalid File Year!", Toast.LENGTH_LONG).show()
-                                                return@Button
-                                            }
+                                            val cleanCourtNo = if (isDispatched) stripLeadingZeros(courtNoInput) else "N/A"
+                                            val cleanSerialVal = if (isDispatched) stripLeadingZeros(serialNoInput) else ""
+                                            val serialFormatted = if (isDispatched) "$listTypeInput - $cleanSerialVal" else ""
 
-                                            val cleanSerial = stripLeadingZeros(fileSerialInput)
-                                            val cleanYear = fileYearInput.trim()
-                                            val formattedFileNo = "$cleanSerial/$cleanYear"
-                                            val cleanDate = normalizeDate(dispatchDateInput)
+                                            val dispatchDetails = if (isDispatched) " | Court No: $cleanCourtNo | Serial: $serialFormatted" else ""
+                                            val logRemark = if (remarksInput.isNotBlank()) " | Remarks: ${remarksInput.trim()}" else ""
 
-                                            if (cleanDate.isBlank()) {
-                                                Toast.makeText(context, "Please enter a valid Dispatch Date", Toast.LENGTH_SHORT).show()
-                                                return@Button
-                                            }
-                                            if (selectedMode == "Dispatched" && (courtNoInput.isBlank() || serialNoInput.isBlank())) {
-                                                Toast.makeText(context, "Court No and Serial No are required", Toast.LENGTH_SHORT).show()
-                                                return@Button
-                                            }
+                                            val entryLog = "[$cleanDate] Registered as '$newStatus'$dispatchDetails${if (isChamber) " (Judge: $judge)" else ""}$logRemark"
+                                            val updatedHistory = if (existing != null) "${existing.historyLog}\n$entryLog" else entryLog
 
-                                            scope.launch {
-                                                val existing = dao.getRecordByFileNo(formattedFileNo)
-                                                val newStatus = if (selectedMode == "Dispatched") "Dispatched" else if (selectedMode == "Chamber") "Sent to Chamber" else "Not Sent to Court"
-                                                val isChamber = selectedMode == "Chamber"
-                                                val isDispatched = selectedMode == "Dispatched"
-                                                val judge = if (isChamber) judgeNameInput.trim() else ""
+                                            val record = FileRecord(
+                                                id = existing?.id ?: 0,
+                                                fileNo = formattedFileNo,
+                                                dispatchDate = cleanDate,
+                                                dispatchDatesCsv = updatedCsv,
+                                                courtNo = if (isChamber) "N/A" else cleanCourtNo,
+                                                serialNo = if (isChamber) "" else serialFormatted,
+                                                status = newStatus,
+                                                storageLocation = "",
+                                                sentToChamber = isChamber,
+                                                judgeName = if (isDispatched) "" else judge,
+                                                remarks = remarksInput.trim(),
+                                                historyLog = updatedHistory,
+                                                reportsOnRecord = existing?.reportsOnRecord ?: "",
+                                                applicationsOnRecord = existing?.applicationsOnRecord ?: ""
+                                            )
+                                            dao.insertOrUpdateRecord(record)
 
-                                                val existingCsv = existing?.dispatchDatesCsv ?: ""
-                                                val updatedCsv = when {
-                                                    existingCsv.isBlank() -> cleanDate
-                                                    existingCsv.contains(cleanDate) -> existingCsv
-                                                    else -> "$existingCsv, $cleanDate"
-                                                }
-
-                                                val cleanCourtNo = if (isDispatched) stripLeadingZeros(courtNoInput) else "N/A"
-                                                val cleanSerialVal = if (isDispatched) stripLeadingZeros(serialNoInput) else ""
-                                                val serialFormatted = if (isDispatched) "$listTypeInput - $cleanSerialVal" else ""
-
-                                                val dispatchDetails = if (isDispatched) " | Court No: $cleanCourtNo | Serial: $serialFormatted" else ""
-                                                val logRemark = if (remarksInput.isNotBlank()) " | Remarks: ${remarksInput.trim()}" else ""
-
-                                                val entryLog = "[$cleanDate] Registered as '$newStatus'$dispatchDetails${if (isChamber) " (Judge: $judge)" else ""}$logRemark"
-                                                val updatedHistory = if (existing != null) "${existing.historyLog}\n$entryLog" else entryLog
-
-                                                val record = FileRecord(
-                                                    id = existing?.id ?: 0,
-                                                    fileNo = formattedFileNo,
-                                                    dispatchDate = cleanDate,
-                                                    dispatchDatesCsv = updatedCsv,
-                                                    courtNo = if (isChamber) "N/A" else cleanCourtNo,
-                                                    serialNo = if (isChamber) "" else serialFormatted,
-                                                    status = newStatus,
-                                                    storageLocation = "",
-                                                    sentToChamber = isChamber,
-                                                    judgeName = if (isDispatched) "" else judge,
-                                                    remarks = remarksInput.trim(),
-                                                    historyLog = updatedHistory,
-                                                    reportsOnRecord = existing?.reportsOnRecord ?: "",
-                                                    applicationsOnRecord = existing?.applicationsOnRecord ?: ""
-                                                )
-                                                dao.insertOrUpdateRecord(record)
-
-                                                fileSerialInput = ""
-                                                serialNoInput = ""
-                                                remarksInput = ""
-                                                Toast.makeText(context, "Record Saved Successfully ($formattedFileNo)!", Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                                    ) {
-                                        Text("SAVE RECORD")
-                                    }
+                                            fileSerialInput = ""
+                                            serialNoInput = ""
+                                            remarksInput = ""
+                                            
+                                            Toast.makeText(context, "Record Saved Successfully ($formattedFileNo)!", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                                ) {
+                                    Text("SAVE RECORD")
                                 }
                             }
+                        }
 
-                            val recentTwoFiles = remember(allDbRecords) { allDbRecords.sortedByDescending { it.id }.take(2) }
-                            Text("Last 2 Registered / Updated Files:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
+                        val recentTwoFiles = remember(allDbRecords) { allDbRecords.sortedByDescending { it.id }.take(2) }
+                        Text("Last 2 Registered / Updated Files:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
+                        
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(recentTwoFiles) { record ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth().clickable { activeTraceRecord = record },
+                                    colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            Text("File: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                            Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else if (record.sentToChamber) Color(0xFF9C27B0) else MaterialTheme.colorScheme.primary) {
+                                                Text(if (record.sentToChamber) "Chamber: ${record.judgeName}" else record.status, color = Color.White)
+                                            }
+                                        }
+                                        if (record.courtNo != "N/A") Text("Court: ${record.courtNo} | ${record.serialNo}", fontSize = 12.sp)
+                                        if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray)
+                                        if (record.remarks.isNotBlank()) Text("📝 ${record.remarks}", fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary)
 
-                            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                items(recentTwoFiles) { record ->
-                                    CaseCardWithMeta(
-                                        record = record,
-                                        onClick = { activeTraceRecord = record },
-                                        onUpdate = { activeUpdateRecord = record },
-                                        onAddMeta = { targetFileForMetaData = record }
-                                    )
+                                        Button(
+                                            onClick = { activeUpdateRecord = record },
+                                            modifier = Modifier.align(Alignment.End).padding(top = 4.dp)
+                                        ) {
+                                            Text("Update Status")
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1893,7 +1962,7 @@ fun MainAppScreen(
         )
     }
 
-    // META-DATA ATTACHMENT DIALOG
+    // META-DATA DIALOG
     targetFileForMetaData?.let { record ->
         AddCaseMetaDataDialog(
             record = record,
@@ -1908,7 +1977,7 @@ fun MainAppScreen(
         )
     }
 
-    // FLUSH CAUSE LIST DATA DIALOG
+    // FLUSH DIALOG
     if (showFlushDialog) {
         var cutoffDateInput by remember { mutableStateOf(currentDate) }
         AlertDialog(
@@ -1974,8 +2043,8 @@ fun CaseCardWithMeta(
 
 /**
  * In-App Cause List Case Status Portal
- * Handles standard form submission for WebDownloadOrderSheet.do,
- * captures authenticated PDF streams, and launches the rendered PDF directly.
+ * Solves the WebDownloadOrderSheet.do frozen page issue by capturing the PDF stream 
+ * generated after captcha submission and opening it via FileProvider.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -2487,7 +2556,6 @@ fun CauseListIngestionWebView(
         }
     }
 
-    // Single Interactive Auto-Detection Dialog
     detectedHtmlToImport?.let { html ->
         AlertDialog(
             onDismissRequest = { 
