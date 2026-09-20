@@ -2035,7 +2035,8 @@ fun EphemeralBytePdfViewerDialog(pdfBytes: ByteArray, onDismiss: () -> Unit) {
 }
 
 /**
- * Add Cause List In-App Web View with Detection Confirmation
+ * In-App Web View for "Add Cause List From Web":
+ * Automatically monitors DOM state and detects when a Cause List table is rendered on screen.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -2047,12 +2048,23 @@ fun CauseListIngestionWebView(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var pendingPdfUrl by remember { mutableStateOf<String?>(null) }
-    var isParsing by remember { mutableStateOf(false) }
     var webView: WebView? by remember { mutableStateOf(null) }
+    var detectedHtmlToImport by remember { mutableStateOf<String?>(null) }
+    var isImporting by remember { mutableStateOf(false) }
 
     BackHandler {
         if (webView?.canGoBack() == true) webView?.goBack() else onClose()
+    }
+
+    class WebAppInterface {
+        @JavascriptInterface
+        fun onCauseListRendered(html: String) {
+            scope.launch(Dispatchers.Main) {
+                if (html.isNotBlank() && detectedHtmlToImport == null && !isImporting) {
+                    detectedHtmlToImport = html
+                }
+            }
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -2063,39 +2075,106 @@ fun CauseListIngestionWebView(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Court $courtNo | Date: $date", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Button(onClick = onClose) { Text("Exit Portal", fontSize = 12.sp) }
+            Text("Target: Court $courtNo | Date: $date", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = {
+                        isImporting = true
+                        webView?.evaluateJavascript(
+                            "(function() { return document.documentElement.outerHTML; })();"
+                        ) { rawHtmlJson ->
+                            scope.launch(Dispatchers.IO) {
+                                try {
+                                    val unescaped = org.json.JSONTokener(rawHtmlJson).nextValue().toString()
+                                    val parsed = WebCauseListParser.parseHtmlCauseList(unescaped, courtNo, date)
+                                    if (parsed.isNotEmpty()) {
+                                        causeListDao.insertAll(parsed)
+                                        withContext(Dispatchers.Main) {
+                                            isImporting = false
+                                            Toast.makeText(context, "Successfully Imported ${parsed.size} Cases from Webpage!", Toast.LENGTH_LONG).show()
+                                        }
+                                    } else {
+                                        withContext(Dispatchers.Main) {
+                                            isImporting = false
+                                            Toast.makeText(context, "No cause list table found. Please ensure it is visible on screen.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        isImporting = false
+                                        Toast.makeText(context, "Parse Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Import Visible HTML", fontSize = 12.sp)
+                }
+
+                Button(onClick = onClose, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)) {
+                    Text("Exit Portal", fontSize = 12.sp)
+                }
+            }
         }
 
-        if (isParsing) {
+        if (isImporting) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            Text("Parsing Cause List PDF locally into SQLite...", fontSize = 11.sp, modifier = Modifier.padding(vertical = 4.dp))
+            Text("Parsing Web Cause List into Database...", fontSize = 11.sp, modifier = Modifier.padding(vertical = 4.dp))
         }
 
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
-                    layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
                     settings.apply {
                         javaScriptEnabled = true
                         domStorageEnabled = true
                         builtInZoomControls = true
                         displayZoomControls = false
+                        useWideViewPort = true
+                        loadWithOverviewMode = true
                     }
+
+                    addJavascriptInterface(WebAppInterface(), "AndroidBridge")
+
                     webViewClient = object : WebViewClient() {
-                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                            val url = request?.url?.toString() ?: return false
-                            if (url.endsWith(".pdf", ignoreCase = true) || url.contains(".pdf?", ignoreCase = true)) {
-                                pendingPdfUrl = url
-                                return true
-                            }
-                            return false
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            // Inject DOM observer to detect when #CauseListDiv displays the table
+                            view?.evaluateJavascript(
+                                """
+                                (function() {
+                                    function checkCauseList() {
+                                        var div = document.getElementById('CauseListDiv');
+                                        if (div && div.style.display !== 'none' && div.innerHTML.indexOf('table-causelist') !== -1) {
+                                            var table = div.querySelector('table.table-causelist');
+                                            if (table && table.rows.length > 2) {
+                                                AndroidBridge.onCauseListRendered(document.documentElement.outerHTML);
+                                            }
+                                        }
+                                    }
+                                    // Watch for AJAX updates to #CauseListDiv
+                                    var targetNode = document.getElementById('CauseListDiv');
+                                    if (targetNode) {
+                                        var observer = new MutationObserver(function(mutations) {
+                                            checkCauseList();
+                                        });
+                                        observer.observe(targetNode, { attributes: true, childList: true, subtree: true });
+                                    }
+                                    // Fallback poll every 2 seconds
+                                    setInterval(checkCauseList, 2000);
+                                })();
+                                """.trimIndent(), null
+                            )
                         }
                     }
-                    setDownloadListener { url, _, _, _, _ ->
-                        if (url.contains("pdf", ignoreCase = true)) pendingPdfUrl = url
-                    }
-                    loadUrl("https://www.allahabadhighcourt.in/causelist/")
+
+                    loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
                     webView = this
                 }
             },
@@ -2103,51 +2182,53 @@ fun CauseListIngestionWebView(
         )
     }
 
-    pendingPdfUrl?.let { url ->
+    // Interactive Auto-Detection Dialog
+    detectedHtmlToImport?.let { html ->
         AlertDialog(
-            onDismissRequest = { pendingPdfUrl = null },
-            title = { Text("Do You Wish to add this PDF?") },
-            text = { Text("Parse all serial numbers, status tags, case numbers, and party names for Court $courtNo on $date?", fontSize = 12.sp) },
+            onDismissRequest = { detectedHtmlToImport = null },
+            title = { Text("Cause List Detected!") },
+            text = { Text("A cause list is currently displayed on screen. Do you wish to import all its cases, companion cases, and party names for Court $courtNo ($date)?") },
             confirmButton = {
-                Button(onClick = {
-                    val pdfToParse = url
-                    pendingPdfUrl = null
-                    isParsing = true
-                    scope.launch(Dispatchers.IO) {
-                        try {
-                            val conn = URL(pdfToParse).openConnection() as HttpURLConnection
-                            conn.connectTimeout = 15000
-                            conn.readTimeout = 15000
-                            val stream = conn.inputStream
-                            val parsedCases = CauseListParser.parseCauseListPdf(stream, courtNo, date)
-                            stream.close()
-
-                            if (parsedCases.isNotEmpty()) {
-                                causeListDao.insertAll(parsedCases)
-                                withContext(Dispatchers.Main) {
-                                    isParsing = false
-                                    Toast.makeText(context, "Imported ${parsedCases.size} Cases for Court $courtNo!", Toast.LENGTH_LONG).show()
+                Button(
+                    onClick = {
+                        val contentToParse = html
+                        detectedHtmlToImport = null
+                        isImporting = true
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                val parsedRecords = WebCauseListParser.parseHtmlCauseList(contentToParse, courtNo, date)
+                                if (parsedRecords.isNotEmpty()) {
+                                    causeListDao.insertAll(parsedRecords)
+                                    withContext(Dispatchers.Main) {
+                                        isImporting = false
+                                        Toast.makeText(context, "Successfully Imported ${parsedRecords.size} Cases for Court $courtNo!", Toast.LENGTH_LONG).show()
+                                    }
+                                } else {
+                                    withContext(Dispatchers.Main) {
+                                        isImporting = false
+                                        Toast.makeText(context, "No rows could be extracted from this view.", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
-                            } else {
+                            } catch (e: Exception) {
                                 withContext(Dispatchers.Main) {
-                                    isParsing = false
-                                    Toast.makeText(context, "No cases extracted from PDF!", Toast.LENGTH_SHORT).show()
+                                    isImporting = false
+                                    Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                                 }
-                            }
-                        } catch (e: Exception) {
-                            withContext(Dispatchers.Main) {
-                                isParsing = false
-                                Toast.makeText(context, "Parse Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                             }
                         }
                     }
-                }) { Text("Yes") }
+                ) {
+                    Text("Import Now")
+                }
             },
-            dismissButton = { TextButton(onClick = { pendingPdfUrl = null }) { Text("No") } }
+            dismissButton = {
+                TextButton(onClick = { detectedHtmlToImport = null }) {
+                    Text("Dismiss")
+                }
+            }
         )
     }
 }
-
 /**
  * Add Case Meta-Data Attachment Dialog
  * - No default selection: User must explicitly choose an option
