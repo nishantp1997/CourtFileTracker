@@ -451,7 +451,12 @@ fun MainAppScreen(
                 )
             }
         ) { padding ->
-            Box(modifier = Modifier.padding(padding).fillMaxSize().padding(12.dp)) {
+            Box(
+    modifier = Modifier
+        .padding(padding)
+        .fillMaxSize()
+        .then(if (currentView == "ADD_CAUSE_LIST" || currentView == "CAUSE_LIST_PORTAL") Modifier else Modifier.padding(12.dp))
+) {
 
                 // 1. IN-APP CAUSE LIST CASE STATUS WEB PORTAL
                 if (currentView == "CAUSE_LIST_PORTAL") {
@@ -1843,7 +1848,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
 
 /**
  * In-App Web View for "Add Cause List From Web":
- * Automatically monitors DOM state and detects when a Cause List table is rendered on screen.
+ * Compact UI with single-prompt lock per loaded cause list table.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -1859,15 +1864,25 @@ fun CauseListIngestionWebView(
     var detectedHtmlToImport by remember { mutableStateOf<String?>(null) }
     var isImporting by remember { mutableStateOf(false) }
 
+    // Prevents repeated prompts for the same rendered page table
+    var lastHandledSignature by remember { mutableStateOf<String?>(null) }
+    var hasPromptBeenShownForCurrentView by remember { mutableStateOf(false) }
+
     BackHandler {
         if (webView?.canGoBack() == true) webView?.goBack() else onClose()
     }
 
     class WebAppInterface {
         @JavascriptInterface
-        fun onCauseListRendered(html: String) {
+        fun onCauseListRendered(tableSignature: String, html: String) {
             scope.launch(Dispatchers.Main) {
-                if (html.isNotBlank() && detectedHtmlToImport == null && !isImporting) {
+                if (!isImporting && 
+                    !hasPromptBeenShownForCurrentView && 
+                    tableSignature != lastHandledSignature && 
+                    detectedHtmlToImport == null
+                ) {
+                    lastHandledSignature = tableSignature
+                    hasPromptBeenShownForCurrentView = true
                     detectedHtmlToImport = html
                 }
             }
@@ -1875,126 +1890,148 @@ fun CauseListIngestionWebView(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        // Compact, zero-waste Top Action Bar
+        Surface(
+            tonalElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Target: Court $courtNo | Date: $date", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Button(
-                    onClick = {
-                        isImporting = true
-                        webView?.evaluateJavascript(
-                            "(function() { return document.documentElement.outerHTML; })();"
-                        ) { rawHtmlJson ->
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    val unescaped = org.json.JSONTokener(rawHtmlJson).nextValue().toString()
-                                    val parsed = WebCauseListParser.parseHtmlCauseList(unescaped, courtNo, date)
-                                    if (parsed.isNotEmpty()) {
-                                        causeListDao.insertAll(parsed)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Court: $courtNo | Date: $date", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("CCMS Portal Ingestion", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(
+                        onClick = {
+                            isImporting = true
+                            webView?.evaluateJavascript(
+                                "(function() { return document.documentElement.outerHTML; })();"
+                            ) { rawHtmlJson ->
+                                scope.launch(Dispatchers.IO) {
+                                    try {
+                                        val unescaped = org.json.JSONTokener(rawHtmlJson).nextValue().toString()
+                                        val parsed = WebCauseListParser.parseHtmlCauseList(unescaped, courtNo, date)
+                                        if (parsed.isNotEmpty()) {
+                                            causeListDao.insertAll(parsed)
+                                            withContext(Dispatchers.Main) {
+                                                isImporting = false
+                                                Toast.makeText(context, "Successfully Imported ${parsed.size} Cases (${parsed.firstOrNull()?.listType ?: ""})!", Toast.LENGTH_LONG).show()
+                                            }
+                                        } else {
+                                            withContext(Dispatchers.Main) {
+                                                isImporting = false
+                                                Toast.makeText(context, "No active cause list table found on screen.", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    } catch (e: Exception) {
                                         withContext(Dispatchers.Main) {
                                             isImporting = false
-                                            Toast.makeText(context, "Successfully Imported ${parsed.size} Cases from Webpage!", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(context, "Parse Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                                         }
-                                    } else {
-                                        withContext(Dispatchers.Main) {
-                                            isImporting = false
-                                            Toast.makeText(context, "No cause list table found. Please ensure it is visible on screen.", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    withContext(Dispatchers.Main) {
-                                        isImporting = false
-                                        Toast.makeText(context, "Parse Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                                     }
                                 }
                             }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Text("Import Visible HTML", fontSize = 12.sp)
-                }
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text("Import Visible", fontSize = 11.sp)
+                    }
 
-                Button(onClick = onClose, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)) {
-                    Text("Exit Portal", fontSize = 12.sp)
+                    OutlinedButton(
+                        onClick = onClose,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text("Exit", fontSize = 11.sp)
+                    }
                 }
             }
         }
 
         if (isImporting) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            Text("Parsing Web Cause List into Database...", fontSize = 11.sp, modifier = Modifier.padding(vertical = 4.dp))
         }
 
-        AndroidView(
-            factory = { ctx ->
-                WebView(ctx).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                    settings.apply {
-                        javaScriptEnabled = true
-                        domStorageEnabled = true
-                        builtInZoomControls = true
-                        displayZoomControls = false
-                        useWideViewPort = true
-                        loadWithOverviewMode = true
-                    }
+        Box(modifier = Modifier.fillMaxSize().weight(1f)) {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            builtInZoomControls = true
+                            displayZoomControls = false
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
+                        }
 
-                    addJavascriptInterface(WebAppInterface(), "AndroidBridge")
+                        addJavascriptInterface(WebAppInterface(), "AndroidBridge")
 
-                    webViewClient = object : WebViewClient() {
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            super.onPageFinished(view, url)
-                            // Inject DOM observer to detect when #CauseListDiv displays the table
-                            view?.evaluateJavascript(
-                                """
-                                (function() {
-                                    function checkCauseList() {
-                                        var div = document.getElementById('CauseListDiv');
-                                        if (div && div.style.display !== 'none' && div.innerHTML.indexOf('table-causelist') !== -1) {
-                                            var table = div.querySelector('table.table-causelist');
-                                            if (table && table.rows.length > 2) {
-                                                AndroidBridge.onCauseListRendered(document.documentElement.outerHTML);
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                hasPromptBeenShownForCurrentView = false
+                            }
+
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                super.onPageFinished(view, url)
+                                // Injected script computes a signature of the table rows and alerts Android strictly once
+                                view?.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        var lastSignature = '';
+                                        function checkTable() {
+                                            var div = document.getElementById('CauseListDiv');
+                                            if (div && div.style.display !== 'none') {
+                                                var table = div.querySelector('table.table-causelist');
+                                                if (table && table.rows.length > 2) {
+                                                    var currentSignature = table.rows.length + '_' + table.rows[1].innerText;
+                                                    if (currentSignature !== lastSignature) {
+                                                        lastSignature = currentSignature;
+                                                        AndroidBridge.onCauseListRendered(currentSignature, document.documentElement.outerHTML);
+                                                    }
+                                                }
                                             }
                                         }
-                                    }
-                                    // Watch for AJAX updates to #CauseListDiv
-                                    var targetNode = document.getElementById('CauseListDiv');
-                                    if (targetNode) {
-                                        var observer = new MutationObserver(function(mutations) {
-                                            checkCauseList();
-                                        });
-                                        observer.observe(targetNode, { attributes: true, childList: true, subtree: true });
-                                    }
-                                    // Fallback poll every 2 seconds
-                                    setInterval(checkCauseList, 2000);
-                                })();
-                                """.trimIndent(), null
-                            )
+                                        var target = document.getElementById('CauseListDiv');
+                                        if (target) {
+                                            var observer = new MutationObserver(function(mutations) {
+                                                checkTable();
+                                            });
+                                            observer.observe(target, { attributes: true, childList: true, subtree: true });
+                                        }
+                                        setInterval(checkTable, 2500);
+                                    })();
+                                    """.trimIndent(), null
+                                )
+                            }
                         }
-                    }
 
-                    loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
-                    webView = this
-                }
-            },
-            modifier = Modifier.fillMaxSize().weight(1f)
-        )
+                        loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
+                        webView = this
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
     }
 
-    // Interactive Auto-Detection Dialog
+    // Single Interactive Auto-Detection Dialog
     detectedHtmlToImport?.let { html ->
         AlertDialog(
-            onDismissRequest = { detectedHtmlToImport = null },
+            onDismissRequest = { 
+                detectedHtmlToImport = null 
+            },
             title = { Text("Cause List Detected!") },
-            text = { Text("A cause list is currently displayed on screen. Do you wish to import all its cases, companion cases, and party names for Court $courtNo ($date)?") },
+            text = { Text("A cause list is open on screen. Do you wish to import its cases and companion files for Court $courtNo ($date)?") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -2006,9 +2043,10 @@ fun CauseListIngestionWebView(
                                 val parsedRecords = WebCauseListParser.parseHtmlCauseList(contentToParse, courtNo, date)
                                 if (parsedRecords.isNotEmpty()) {
                                     causeListDao.insertAll(parsedRecords)
+                                    val detectedType = parsedRecords.firstOrNull()?.listType ?: "DCL"
                                     withContext(Dispatchers.Main) {
                                         isImporting = false
-                                        Toast.makeText(context, "Successfully Imported ${parsedRecords.size} Cases for Court $courtNo!", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "Imported ${parsedRecords.size} Cases as '$detectedType'!", Toast.LENGTH_LONG).show()
                                     }
                                 } else {
                                     withContext(Dispatchers.Main) {
@@ -2029,13 +2067,17 @@ fun CauseListIngestionWebView(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { detectedHtmlToImport = null }) {
+                TextButton(onClick = { 
+                    detectedHtmlToImport = null 
+                }) {
                     Text("Dismiss")
                 }
             }
         )
     }
 }
+
+
 /**
  * Add Case Meta-Data Attachment Dialog
  * - No default selection: User must explicitly choose an option
