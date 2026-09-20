@@ -1635,8 +1635,8 @@ fun CaseCardWithMeta(
 }
 
 /**
- * Dedicated In-App Cause List Case Status Portal with Smooth Multi-Directional Scrolling
- * and Integrated "Find in Page" (Search / Jump) Controls
+ * In-App Cause List Case Status Portal with Window Popup Handling,
+ * Native Session Cookie Forwarding, and Reliable Judgment PDF Rendering
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -1652,7 +1652,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     var totalMatches by remember { mutableStateOf(0) }
 
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     BackHandler {
         if (isSearchActive) {
@@ -1666,7 +1665,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Top Navigation Bar
+        // Top Action Bar
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1702,7 +1701,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
             }
         }
 
-        // Expandable Find in Page Bar
+        // Find in Page Panel
         if (isSearchActive) {
             Card(
                 modifier = Modifier
@@ -1744,16 +1743,16 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
 
                     IconButton(
                         enabled = totalMatches > 0,
-                        onClick = { webView?.findNext(false) } // Previous match
+                        onClick = { webView?.findNext(false) }
                     ) {
-                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Previous match")
+                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Previous")
                     }
 
                     IconButton(
                         enabled = totalMatches > 0,
-                        onClick = { webView?.findNext(true) } // Next match
+                        onClick = { webView?.findNext(true) }
                     ) {
-                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next match")
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next")
                     }
 
                     IconButton(onClick = {
@@ -1763,7 +1762,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                         totalMatches = 0
                         activeMatchIndex = 0
                     }) {
-                        Icon(Icons.Default.Close, contentDescription = "Close search")
+                        Icon(Icons.Default.Close, contentDescription = "Close")
                     }
                 }
             }
@@ -1780,12 +1779,16 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
 
-                        // Enable smooth scrolling and omnidirectional scrollbars
+                        // Enable scrolling, pan, and viewport zoom
                         isVerticalScrollBarEnabled = true
                         isHorizontalScrollBarEnabled = true
                         isScrollbarFadingEnabled = false
                         scrollBarStyle = WebView.SCROLLBARS_INSIDE_OVERLAY
                         overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
+
+                        val cookieManager = CookieManager.getInstance()
+                        cookieManager.setAcceptCookie(true)
+                        cookieManager.setAcceptThirdPartyCookies(this, true)
 
                         settings.apply {
                             javaScriptEnabled = true
@@ -1795,12 +1798,37 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             builtInZoomControls = true
                             displayZoomControls = false
                             setSupportZoom(true)
+                            javaScriptCanOpenWindowsAutomatically = true
+                            setSupportMultipleWindows(true) // Required for window.open / target="_blank"
                         }
 
-                        // Register Match Listener for Native Find in Page
-                        setFindListener { activeIndex, matchCount, isDoneCounting ->
+                        setFindListener { activeIndex, matchCount, _ ->
                             activeMatchIndex = activeIndex
                             totalMatches = matchCount
+                        }
+
+                        // Intercept target="_blank" popups used by captcha judgment links
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onCreateWindow(
+                                view: WebView?,
+                                isDialog: Boolean,
+                                isUserGesture: Boolean,
+                                resultMsg: android.os.Message?
+                            ): Boolean {
+                                val popupWebView = WebView(ctx)
+                                popupWebView.settings.javaScriptEnabled = true
+                                popupWebView.webViewClient = object : WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
+                                        val url = request?.url?.toString() ?: return false
+                                        activePdfUrl = url
+                                        return true
+                                    }
+                                }
+                                val transport = resultMsg?.obj as? WebView.WebViewTransport
+                                transport?.webView = popupWebView
+                                resultMsg?.sendToTarget()
+                                return true
+                            }
                         }
 
                         webViewClient = object : WebViewClient() {
@@ -1814,7 +1842,8 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
 
                             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                 val url = request?.url?.toString() ?: return false
-                                if (url.endsWith(".pdf", ignoreCase = true) || url.contains(".pdf?", ignoreCase = true)) {
+                                val lower = url.lowercase()
+                                if (lower.endsWith(".pdf") || lower.contains(".pdf?") || lower.contains("display_pdf") || lower.contains("get_order") || lower.contains("download_order")) {
                                     activePdfUrl = url
                                     return true
                                 }
@@ -1822,8 +1851,11 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             }
                         }
 
-                        setDownloadListener { url, _, _, _, _ ->
-                            if (url.contains("pdf", ignoreCase = true)) activePdfUrl = url
+                        // Intercept direct file streams
+                        setDownloadListener { url, _, _, mimeType, _ ->
+                            if (url.contains("pdf", ignoreCase = true) || mimeType.equals("application/pdf", ignoreCase = true)) {
+                                activePdfUrl = url
+                            }
                         }
 
                         loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
@@ -1833,7 +1865,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Floating Navigation Overlay for Rapid Scrolling (Left, Right, Top, Bottom, Up, Down)
+            // Floating Navigation Overlay for smooth manual scrolling
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -1841,56 +1873,47 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 SmallFloatingActionButton(
-                    onClick = {
-                        // Scroll to top
-                        webView?.scrollTo(webView?.scrollX ?: 0, 0)
-                    },
+                    onClick = { webView?.scrollTo(webView?.scrollX ?: 0, 0) },
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 ) {
-                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Scroll to top", modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Top", modifier = Modifier.size(18.dp))
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     SmallFloatingActionButton(
-                        onClick = {
-                            // Smooth scroll left by 300px
-                            webView?.scrollBy(-300, 0)
-                        },
+                        onClick = { webView?.scrollBy(-300, 0) },
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                     ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Scroll Left", modifier = Modifier.size(14.dp))
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Pan Left", modifier = Modifier.size(14.dp))
                     }
 
                     SmallFloatingActionButton(
-                        onClick = {
-                            // Smooth scroll right by 300px
-                            webView?.scrollBy(300, 0)
-                        },
+                        onClick = { webView?.scrollBy(300, 0) },
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                     ) {
-                        Icon(Icons.Default.ArrowForward, contentDescription = "Scroll Right", modifier = Modifier.size(14.dp))
+                        Icon(Icons.Default.ArrowForward, contentDescription = "Pan Right", modifier = Modifier.size(14.dp))
                     }
                 }
 
                 SmallFloatingActionButton(
-                    onClick = {
-                        // Scroll to bottom
-                        webView?.scrollTo(webView?.scrollX ?: 0, 100000)
-                    },
+                    onClick = { webView?.scrollTo(webView?.scrollX ?: 0, 100000) },
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 ) {
-                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Scroll to bottom", modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bottom", modifier = Modifier.size(18.dp))
                 }
             }
 
+            // In-Memory PDF Dialog
             activePdfUrl?.let { url ->
                 EphemeralPdfViewerDialog(pdfUrl = url, onDismiss = { activePdfUrl = null })
             }
         }
     }
 }
+
 /**
- * Ephemeral In-Memory PDF Dialog: Discards and deletes the file upon exit
+ * Ephemeral In-Memory PDF Dialog:
+ * Forwards active browser session cookies and headers so captcha verification isn't lost.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1922,9 +1945,29 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
                 tempPdfFile = target
 
                 val conn = URL(pdfUrl).openConnection() as HttpURLConnection
-                conn.connectTimeout = 15000
-                conn.readTimeout = 15000
-                conn.inputStream.use { input -> FileOutputStream(target).use { output -> input.copyTo(output) } }
+                conn.connectTimeout = 20000
+                conn.readTimeout = 20000
+
+                // Pass active portal cookies so the server recognizes the solved captcha session
+                val cookies = CookieManager.getInstance().getCookie(pdfUrl)
+                if (!cookies.isNullOrBlank()) {
+                    conn.setRequestProperty("Cookie", cookies)
+                }
+                conn.setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36"
+                )
+                conn.setRequestProperty("Accept", "application/pdf,*/*")
+                conn.instanceFollowRedirects = true
+
+                conn.inputStream.use { input ->
+                    FileOutputStream(target).use { output -> input.copyTo(output) }
+                }
+
+                // Verify the file has content and is a valid PDF
+                if (!target.exists() || target.length() < 100) {
+                    throw IllegalStateException("Downloaded file is empty or captcha session expired.")
+                }
 
                 val pfd = ParcelFileDescriptor.open(target, ParcelFileDescriptor.MODE_READ_ONLY)
                 val renderer = PdfRenderer(pfd)
@@ -1945,7 +1988,7 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "Could not open document: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Could not open document: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                     cleanupFile()
                     onDismiss()
                 }
@@ -1953,7 +1996,10 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
         }
     }
 
-    Dialog(onDismissRequest = { cleanupFile(); onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(
+        onDismissRequest = { cleanupFile(); onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -1966,14 +2012,32 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
                 )
             }
         ) { padding ->
-            Box(modifier = Modifier.padding(padding).fillMaxSize().background(Color(0xFFE0E0E0)), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .padding(padding)
+                    .fillMaxSize()
+                    .background(Color(0xFFE0E0E0)),
+                contentAlignment = Alignment.Center
+            ) {
                 if (isLoading) {
-                    CircularProgressIndicator()
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator()
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Fetching authenticated PDF judgment...", fontSize = 12.sp)
+                    }
                 } else {
-                    LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         itemsIndexed(pageBitmaps) { _, bmp ->
                             Card(modifier = Modifier.fillMaxWidth()) {
-                                Image(bitmap = bmp.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxWidth())
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
                         }
                     }
@@ -1982,6 +2046,7 @@ fun EphemeralPdfViewerDialog(pdfUrl: String, onDismiss: () -> Unit) {
         }
     }
 }
+
 
 /**
  * Add Cause List In-App Web View with Detection Confirmation
