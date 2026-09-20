@@ -1626,13 +1626,15 @@ fun CaseCardWithMeta(
 
 /**
  * In-App Cause List Case Status Portal
- * Handles cross-origin POST submissions and JavaScript alerts for WebDownloadOrderSheet.do
+ * Solves the WebDownloadOrderSheet.do frozen page issue by capturing the PDF stream 
+ * generated after captcha submission and opening it via FileProvider.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     var webView: WebView? by remember { mutableStateOf(null) }
     var isLoading by remember { mutableStateOf(false) }
+    var isDownloadingOrderSheet by remember { mutableStateOf(false) }
 
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -1640,6 +1642,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     var totalMatches by remember { mutableStateOf(0) }
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     BackHandler {
         if (isSearchActive) {
@@ -1649,6 +1652,25 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
             webView?.goBack()
         } else {
             onNavigateBack()
+        }
+    }
+
+    // Helper to safely open the judgment file using the device's native PDF handler
+    fun openDownloadedPdf(file: File) {
+        try {
+            val uri: Uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/pdf")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(Intent.createChooser(intent, "Open Judgment / Order Sheet"))
+        } catch (e: Exception) {
+            Toast.makeText(context, "No PDF viewer app found on device: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1703,7 +1725,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
             }
         }
 
-        // In-page search bar
+        // In-page Find bar
         if (isSearchActive) {
             Card(
                 modifier = Modifier
@@ -1757,7 +1779,17 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
             }
         }
 
-        if (isLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        if (isLoading || isDownloadingOrderSheet) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            if (isDownloadingOrderSheet) {
+                Text(
+                    text = "Opening Judgment / Order Sheet PDF...",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+            }
+        }
 
         Box(modifier = Modifier.fillMaxSize().weight(1f)) {
             AndroidView(
@@ -1788,11 +1820,10 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             displayZoomControls = false
                             setSupportZoom(true)
                             javaScriptCanOpenWindowsAutomatically = true
-                            // Let the custom WebChromeClient handle target="_blank" window redirection
-                            setSupportMultipleWindows(true)
-                            // Allow legacy assets and mixed cross-origin resources from elegalix
+                            // Force windows to stay inside the same session
+                            setSupportMultipleWindows(false)
                             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                            userAgentString = "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                            userAgentString = "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
                         }
 
                         setFindListener { activeIndex, matchCount, _ ->
@@ -1800,47 +1831,15 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             totalMatches = matchCount
                         }
 
-                        // Essential: Display alerts and allow new tabs to redirect right back into this view
                         webChromeClient = object : WebChromeClient() {
-                            override fun onJsAlert(
-                                view: WebView?,
-                                url: String?,
-                                message: String?,
-                                result: JsResult?
-                            ): Boolean {
+                            override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
                                 Toast.makeText(ctx, message ?: "Alert", Toast.LENGTH_SHORT).show()
                                 result?.confirm()
                                 return true
                             }
 
-                            override fun onJsConfirm(
-                                view: WebView?,
-                                url: String?,
-                                message: String?,
-                                result: JsResult?
-                            ): Boolean {
+                            override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
                                 result?.confirm()
-                                return true
-                            }
-
-                            override fun onCreateWindow(
-                                view: WebView?,
-                                isDialog: Boolean,
-                                isUserGesture: Boolean,
-                                resultMsg: android.os.Message?
-                            ): Boolean {
-                                // Capture target="_blank" form submits and navigate this same WebView
-                                val tempWebView = WebView(ctx)
-                                tempWebView.webViewClient = object : WebViewClient() {
-                                    override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
-                                        val targetUrl = request?.url?.toString() ?: return false
-                                        view?.loadUrl(targetUrl)
-                                        return true
-                                    }
-                                }
-                                val transport = resultMsg?.obj as? WebView.WebViewTransport
-                                transport?.webView = tempWebView
-                                resultMsg?.sendToTarget()
                                 return true
                             }
                         }
@@ -1852,7 +1851,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 isLoading = false
-                                // Strip any target="_blank" attributes directly on the DOM
+                                // Strip target="_blank" from captcha forms so the response goes through the same client
                                 view?.evaluateJavascript(
                                     """
                                     (function() {
@@ -1862,30 +1861,56 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                                                 forms[i].removeAttribute('target');
                                                 forms[i].setAttribute('target', '_self');
                                             }
-                                            var links = document.querySelectorAll('a[target="_blank"]');
-                                            for (var j = 0; j < links.length; j++) {
-                                                links[j].removeAttribute('target');
-                                                links[j].setAttribute('target', '_self');
-                                            }
                                         } catch (e) {}
                                     })();
                                     """.trimIndent(), null
                                 )
                             }
 
-                            override fun onReceivedSslError(
-                                view: WebView?,
-                                handler: SslErrorHandler?,
-                                error: android.net.http.SslError?
-                            ) {
-                                // Ensure SSL handshake between allahabadhighcourt.in and elegalix completes
+                            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
                                 handler?.proceed()
                             }
+                        }
 
-                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                val destUrl = request?.url?.toString() ?: return false
-                                view?.loadUrl(destUrl)
-                                return true
+                        // Catch the binary PDF response sent by WebDownloadOrderSheet.do
+                        setDownloadListener { downloadUrl, userAgent, contentDisposition, mimeType, contentLength ->
+                            isDownloadingOrderSheet = true
+                            scope.launch(Dispatchers.IO) {
+                                try {
+                                    val cookie = CookieManager.getInstance().getCookie(downloadUrl)
+                                    val conn = URL(downloadUrl).openConnection() as HttpURLConnection
+                                    conn.connectTimeout = 30000
+                                    conn.readTimeout = 30000
+                                    if (!cookie.isNullOrBlank()) {
+                                        conn.setRequestProperty("Cookie", cookie)
+                                    }
+                                    conn.setRequestProperty("User-Agent", userAgent ?: settings.userAgentString)
+                                    conn.setRequestProperty("Accept", "application/pdf,*/*")
+                                    conn.instanceFollowRedirects = true
+
+                                    val targetDir = File(context.cacheDir, "judgments").apply { if (!exists()) mkdirs() }
+                                    val outFile = File(targetDir, "OrderSheet_${System.currentTimeMillis()}.pdf")
+
+                                    conn.inputStream.use { input ->
+                                        FileOutputStream(outFile).use { output ->
+                                            input.copyTo(output)
+                                        }
+                                    }
+
+                                    withContext(Dispatchers.Main) {
+                                        isDownloadingOrderSheet = false
+                                        if (outFile.exists() && outFile.length() > 200) {
+                                            openDownloadedPdf(outFile)
+                                        } else {
+                                            Toast.makeText(context, "Captcha invalid or empty order sheet received. Please try again.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    withContext(Dispatchers.Main) {
+                                        isDownloadingOrderSheet = false
+                                        Toast.makeText(context, "Failed to download judgment: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
                             }
                         }
 
@@ -1896,7 +1921,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             )
 
-            // Pan and scroll action buttons
+            // Pan and scroll navigation controls
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -1936,7 +1961,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
         }
     }
 }
-
 
 /**
  * In-App Web View for "Add Cause List From Web":
