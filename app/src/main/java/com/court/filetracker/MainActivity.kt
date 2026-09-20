@@ -2112,26 +2112,61 @@ fun CauseListIngestionWebView(courtNo: String, date: String, causeListDao: Cause
 
 /**
  * Add Case Meta-Data Attachment Dialog
+ * - No default selection: User must explicitly choose an option
  */
 @Composable
-fun AddCaseMetaDataDialog(record: FileRecord, onDismiss: () -> Unit, onSave: (FileRecord) -> Unit) {
-    var metaType by remember { mutableStateOf("REPORT") }
-    var selectedReportOption by remember { mutableStateOf("Notice: Served") }
+fun AddCaseMetaDataDialog(
+    record: FileRecord,
+    onDismiss: () -> Unit,
+    onSave: (FileRecord) -> Unit
+) {
+    var metaType by remember { mutableStateOf("REPORT") } // "REPORT" or "APPLICATION"
+    
+    // Default to empty string so nothing is pre-selected
+    var selectedReportOption by remember { mutableStateOf("") }
     var customReportText by remember { mutableStateOf("") }
     var reportDateInput by remember { mutableStateOf("") }
+    
     var appNoInput by remember { mutableStateOf("") }
     var appYearInput by remember { mutableStateOf("2026") }
 
-    val reportOptions = listOf("Notice: Served", "Notice: Unserved", "Compromise: Done", "Compromise: Not Done", "Mediation Report", "Other Report")
+    val reportOptions = listOf(
+        "Notice: Served",
+        "Notice: Unserved",
+        "Compromise: Done",
+        "Compromise: Not Done",
+        "Mediation Report",
+        "Other Report"
+    )
+
+    // Validation check before enabling Save button
+    val isReportValid = if (selectedReportOption == "Other Report") {
+        customReportText.isNotBlank()
+    } else {
+        selectedReportOption.isNotBlank()
+    }
+
+    val isAppValid = appNoInput.isNotBlank() && appYearInput.isNotBlank()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Case Meta-Data: ${record.fileNo}", fontSize = 15.sp) },
         text = {
             Column {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
-                    FilterChip(selected = metaType == "REPORT", onClick = { metaType = "REPORT" }, label = { Text("Keep Report") })
-                    FilterChip(selected = metaType == "APPLICATION", onClick = { metaType = "APPLICATION" }, label = { Text("Add Application") })
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceAround
+                ) {
+                    FilterChip(
+                        selected = metaType == "REPORT",
+                        onClick = { metaType = "REPORT" },
+                        label = { Text("Keep Report") }
+                    )
+                    FilterChip(
+                        selected = metaType == "APPLICATION",
+                        onClick = { metaType = "APPLICATION" },
+                        label = { Text("Add Application") }
+                    )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -2139,50 +2174,104 @@ fun AddCaseMetaDataDialog(record: FileRecord, onDismiss: () -> Unit, onSave: (Fi
                     var dropdownExpanded by remember { mutableStateOf(false) }
                     Box(modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
-                            value = selectedReportOption,
+                            value = selectedReportOption.ifEmpty { "Choose Report Type..." },
                             onValueChange = {},
                             readOnly = true,
-                            label = { Text("Select Report Type") },
-                            trailingIcon = { IconButton(onClick = { dropdownExpanded = true }) { Icon(Icons.Default.ArrowDropDown, contentDescription = null) } },
+                            label = { Text("Select Report Type *") },
+                            trailingIcon = {
+                                IconButton(onClick = { dropdownExpanded = true }) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                }
+                            },
                             modifier = Modifier.fillMaxWidth()
                         )
-                        DropdownMenu(expanded = dropdownExpanded, onDismissRequest = { dropdownExpanded = false }) {
+                        DropdownMenu(
+                            expanded = dropdownExpanded,
+                            onDismissRequest = { dropdownExpanded = false }
+                        ) {
                             reportOptions.forEach { opt ->
-                                DropdownMenuItem(text = { Text(opt) }, onClick = { selectedReportOption = opt; dropdownExpanded = false })
+                                DropdownMenuItem(
+                                    text = { Text(opt) },
+                                    onClick = {
+                                        selectedReportOption = opt
+                                        dropdownExpanded = false
+                                    }
+                                )
                             }
                         }
                     }
+
                     if (selectedReportOption == "Other Report") {
-                        OutlinedTextField(value = customReportText, onValueChange = { customReportText = it }, label = { Text("Specify Description") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+                        OutlinedTextField(
+                            value = customReportText,
+                            onValueChange = { customReportText = it },
+                            label = { Text("Specify Report Description *") },
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                        )
                     }
-                    OutlinedTextField(value = reportDateInput, onValueChange = { reportDateInput = it }, label = { Text("Report Date (Optional e.g. 21-09-26)") }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
+
+                    OutlinedTextField(
+                        value = reportDateInput,
+                        onValueChange = { reportDateInput = it },
+                        label = { Text("Report Date (Optional, e.g. 21-09-26)") },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                    )
                 } else {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(value = appNoInput, onValueChange = { appNoInput = it }, label = { Text("App No (e.g. 9)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
-                        OutlinedTextField(value = appYearInput, onValueChange = { appYearInput = it }, label = { Text("Year (e.g. 2026)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = appNoInput,
+                            onValueChange = { appNoInput = it },
+                            label = { Text("App No (e.g. 9)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = appYearInput,
+                            onValueChange = { appYearInput = it },
+                            label = { Text("Year (e.g. 2026)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f)
+                        )
                     }
-                    Text("Format: [App No]/[Year]", fontSize = 11.sp, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+                    Text(
+                        "Format: [App No]/[Year]",
+                        fontSize = 11.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
                 }
             }
         },
         confirmButton = {
-            Button(onClick = {
-                val currentDate = SimpleDateFormat("dd-MM-yy", Locale.getDefault()).format(Date())
-                if (metaType == "REPORT") {
-                    val label = if (selectedReportOption == "Other Report") customReportText.trim() else selectedReportOption
-                    val suffix = if (reportDateInput.isNotBlank()) " (Date: ${reportDateInput.trim()})" else ""
-                    val str = "$label$suffix"
-                    val updatedReports = if (record.reportsOnRecord.isBlank()) str else "${record.reportsOnRecord}\n$str"
-                    val log = "${record.historyLog}\n[$currentDate] Placed on Record -> $str"
-                    onSave(record.copy(reportsOnRecord = updatedReports, historyLog = log))
-                } else {
-                    val app = "${appNoInput.trim()}/${appYearInput.trim()}"
-                    val updatedApps = if (record.applicationsOnRecord.isBlank()) app else "${record.applicationsOnRecord}, $app"
-                    val log = "${record.historyLog}\n[$currentDate] Application Tagged -> $app"
-                    onSave(record.copy(applicationsOnRecord = updatedApps, historyLog = log))
+            Button(
+                enabled = (metaType == "REPORT" && isReportValid) || (metaType == "APPLICATION" && isAppValid),
+                onClick = {
+                    val currentDate = SimpleDateFormat("dd-MM-yy", Locale.getDefault()).format(Date())
+                    if (metaType == "REPORT") {
+                        val label = if (selectedReportOption == "Other Report") customReportText.trim() else selectedReportOption
+                        val suffix = if (reportDateInput.isNotBlank()) " (Date: ${reportDateInput.trim()})" else ""
+                        val str = "$label$suffix"
+                        val updatedReports = if (record.reportsOnRecord.isBlank()) str else "${record.reportsOnRecord}\n$str"
+                        val log = "${record.historyLog}\n[$currentDate] Placed on Record -> $str"
+                        onSave(record.copy(reportsOnRecord = updatedReports, historyLog = log))
+                    } else {
+                        val app = "${appNoInput.trim()}/${appYearInput.trim()}"
+                        val updatedApps = if (record.applicationsOnRecord.isBlank()) app else "${record.applicationsOnRecord}, $app"
+                        val log = "${record.historyLog}\n[$currentDate] Application Tagged -> $app"
+                        onSave(record.copy(applicationsOnRecord = updatedApps, historyLog = log))
+                    }
                 }
-            }) { Text("Save Meta-Data") }
+            ) {
+                Text("Save Meta-Data")
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
     )
 }
