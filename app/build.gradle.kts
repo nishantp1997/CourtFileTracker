@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.crt.track"
+    namespace = "com.court.track"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.crt.track"
+        applicationId = "com.court.track"
         minSdk = 24
         targetSdk = 34
         versionCode = 2
