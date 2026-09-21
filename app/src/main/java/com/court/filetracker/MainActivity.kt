@@ -2079,6 +2079,7 @@ fun CauseListStatusWebViewContent(
     onDisableDrawerGestures: (Boolean) -> Unit
 ) {
     var webView: WebView? by remember { mutableStateOf(null) }
+    var currentUrl by remember { mutableStateOf("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist") }
     var isLoading by remember { mutableStateOf(false) }
 
     var isSearchActive by remember { mutableStateOf(false) }
@@ -2251,7 +2252,7 @@ fun CauseListStatusWebViewContent(
                             displayZoomControls = false
                             
                             javaScriptCanOpenWindowsAutomatically = true
-                            setSupportMultipleWindows(true) // Allows popup/new-window behavior normally
+                            setSupportMultipleWindows(true) // Enables popup window creation
                             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                             
                             userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -2264,10 +2265,34 @@ fun CauseListStatusWebViewContent(
 
                         webChromeClient = object : WebChromeClient() {
                             override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
-                                // Allow target="_blank" links/popups to load naturally in the same view like a regular browser
+                                // Safely handle new window/tab requests (like clicking "View" for judgments) without crashing
+                                val newWebView = WebView(ctx).apply {
+                                    settings.javaScriptEnabled = true
+                                    settings.useWideViewPort = true
+                                    settings.loadWithOverviewMode = true
+                                    settings.domStorageEnabled = true
+                                    
+                                    webViewClient = object : WebViewClient() {
+                                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                            request?.url?.toString()?.let { loadUrl(it) }
+                                            return true
+                                        }
+                                    }
+                                }
+                                
+                                // Display the new window contents directly in the current active WebView view
                                 val transport = resultMsg?.obj as? WebView.WebViewTransport
-                                transport?.webView = this@apply
+                                transport?.webView = newWebView
                                 resultMsg?.sendToTarget()
+
+                                // Load the popup content into our primary view so user can solve captcha and see order
+                                newWebView.webViewClient = object : WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                        val url = request?.url.toString()
+                                        this@apply.loadUrl(url)
+                                        return true
+                                    }
+                                }
                                 return true
                             }
 
@@ -2308,7 +2333,6 @@ fun CauseListStatusWebViewContent(
                             }
 
                             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                // Standard browser navigation behavior for all links and pages
                                 view?.loadUrl(request?.url.toString())
                                 return true
                             }
@@ -2318,7 +2342,7 @@ fun CauseListStatusWebViewContent(
                             }
                         }
 
-                        loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
+                        loadUrl(currentUrl)
                         webView = this
                     }
                 },
