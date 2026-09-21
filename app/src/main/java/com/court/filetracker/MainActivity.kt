@@ -554,122 +554,228 @@ fun MainAppScreen(
     }
 }
 
-                    "DISPATCH_CAUSE_LIST" -> {
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            OutlinedTextField(
-                                value = dispatchClDateInput,
-                                onValueChange = { 
-                                    dispatchClDateInput = it 
-                                    selectedClCourtChip = null
-                                },
-                                label = { Text("Cause List Date (dd-MM-yy)") },
-                                modifier = Modifier.fillMaxWidth()
-                            )
+                   "DISPATCH_CAUSE_LIST" -> {
+    // State for comma-separated serial number filtering
+    var serialFilterInput by remember { mutableStateOf("") }
+    var selectedDispatchFileIds by remember { mutableStateOf(setOf<Long>()) }
 
-                            Text("Available Courts with Cause Lists (${courtsWithClForDate.size}):", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
-                            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                courtsWithClForDate.forEach { court ->
-                                    FilterChip(
-                                        selected = selectedClCourtChip == court,
-                                        onClick = { selectedClCourtChip = if (selectedClCourtChip == court) null else court },
-                                        label = { Text("Court $court") }
-                                    )
+    Column(modifier = Modifier.fillMaxSize()) {
+        OutlinedTextField(
+            value = dispatchClDateInput,
+            onValueChange = { 
+                dispatchClDateInput = it 
+                selectedClCourtChip = null
+                selectedDispatchFileIds = emptySet()
+            },
+            label = { Text("Cause List Date (dd-MM-yy)") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Text("Available Courts with Cause Lists (${courtsWithClForDate.size}):", fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            courtsWithClForDate.forEach { court ->
+                FilterChip(
+                    selected = selectedClCourtChip == court,
+                    onClick = { 
+                        selectedClCourtChip = if (selectedClCourtChip == court) null else court
+                        selectedDispatchFileIds = emptySet()
+                    },
+                    label = { Text("Court $court") }
+                )
+            }
+        }
+
+        if (selectedClCourtChip != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            OutlinedTextField(
+                value = serialFilterInput,
+                onValueChange = { serialFilterInput = it },
+                label = { Text("Filter by Serial Nos. (Comma Separated, e.g. 12, 139, 145)") },
+                leadingIcon = { Icon(Icons.Default.List, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            OutlinedTextField(
+                value = clSearchQuery,
+                onValueChange = { clSearchQuery = it },
+                label = { Text("Search Party Name or File No.") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Parse comma-separated serial numbers from input
+            val targetSerials = remember(serialFilterInput) {
+                serialFilterInput.split(",")
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+            }
+
+            // Filter logic applying exact match, connected sub-cases (e.g. 139.1), and all corrections
+            val filteredCases = activeCourtCases.filter { clRecord ->
+                // Secondary text query filter
+                val matchesTextQuery = if (clSearchQuery.isBlank()) true else {
+                    clRecord.fileNo.contains(clSearchQuery, ignoreCase = true) ||
+                    clRecord.partyName.contains(clSearchQuery, ignoreCase = true) ||
+                    clRecord.serialNo.contains(clSearchQuery, ignoreCase = true)
+                }
+
+                if (!matchesTextQuery) return@filter false
+
+                // If no serial numbers are filtered, show all; otherwise evaluate rules
+                if (targetSerials.isEmpty()) {
+                    true
+                } else {
+                    val isCorrection = clRecord.listType.equals("Correction", ignoreCase = true)
+                    val cleanRecordSerial = stripLeadingZeros(clRecord.serialNo)
+
+                    isCorrection || targetSerials.any { enteredSr ->
+                        val cleanEntered = stripLeadingZeros(enteredSr)
+                        // Match exact serial or connected sub-cases (e.g. 139 matches 139, 139.1, 139/1)
+                        cleanRecordSerial == cleanEntered || 
+                        cleanRecordSerial.startsWith("$cleanEntered.") || 
+                        cleanRecordSerial.startsWith("$cleanEntered/")
+                    }
+                }
+            }
+
+            // Bulk Dispatch Action Row
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(
+                        onClick = { selectedDispatchFileIds = filteredCases.map { it.id }.toSet() },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("Select All (${filteredCases.size})", fontSize = 11.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { selectedDispatchFileIds = emptySet() },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text("Clear", fontSize = 11.sp)
+                    }
+                }
+
+                Button(
+                    enabled = selectedDispatchFileIds.isNotEmpty(),
+                    onClick = {
+                        scope.launch {
+                            val selectedItems = filteredCases.filter { selectedDispatchFileIds.contains(it.id) }
+                            val cleanDate = normalizeDate(dispatchClDateInput)
+                            val targetCourt = selectedClCourtChip ?: ""
+
+                            val recordsToSave = mutableListOf<FileRecord>()
+
+                            for (clRecord in selectedItems) {
+                                val cleanSerialVal = stripLeadingZeros(clRecord.serialNo)
+                                val serialFormatted = "${clRecord.listType} - $cleanSerialVal"
+
+                                val existing = dao.getRecordByFileNo(clRecord.fileNo)
+                                val existingCsv = existing?.dispatchDatesCsv ?: ""
+                                val updatedCsv = when {
+                                    existingCsv.isBlank() -> cleanDate
+                                    existingCsv.contains(cleanDate) -> existingCsv
+                                    else -> "$existingCsv, $cleanDate"
                                 }
+
+                                val dispatchDetails = " | Court No: $targetCourt | Serial: $serialFormatted"
+                                val entryLog = "[$cleanDate] Dispatched via Cause List$dispatchDetails"
+                                val updatedHistory = if (existing != null) "${existing.historyLog}\n$entryLog" else entryLog
+
+                                val record = FileRecord(
+                                    id = existing?.id ?: 0,
+                                    fileNo = clRecord.fileNo,
+                                    dispatchDate = cleanDate,
+                                    dispatchDatesCsv = updatedCsv,
+                                    courtNo = targetCourt,
+                                    serialNo = serialFormatted,
+                                    status = "Dispatched",
+                                    storageLocation = "",
+                                    sentToChamber = false,
+                                    judgeName = "",
+                                    remarks = existing?.remarks ?: "",
+                                    historyLog = updatedHistory,
+                                    reportsOnRecord = existing?.reportsOnRecord ?: "",
+                                    applicationsOnRecord = existing?.applicationsOnRecord ?: ""
+                                )
+                                recordsToSave.add(record)
                             }
 
-                            if (selectedClCourtChip != null) {
-                                OutlinedTextField(
-                                    value = clSearchQuery,
-                                    onValueChange = { clSearchQuery = it },
-                                    label = { Text("Search Serial No. or File No.") },
-                                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                            dao.insertOrUpdateAll(recordsToSave)
+                            selectedDispatchFileIds = emptySet()
+                            Toast.makeText(context, "Successfully Dispatched ${recordsToSave.size} Cases to Court $targetCourt!", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text("Bulk Dispatch (${selectedDispatchFileIds.size})", fontSize = 11.sp)
+                }
+            }
+
+            Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    items(filteredCases) { clRecord ->
+                        val matchedLocal = allDbRecords.firstOrNull { it.fileNo == clRecord.fileNo }
+                        val isSelected = selectedDispatchFileIds.contains(clRecord.id)
+
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selectedDispatchFileIds = if (isSelected) {
+                                        selectedDispatchFileIds - clRecord.id
+                                    } else {
+                                        selectedDispatchFileIds + clRecord.id
+                                    }
+                                },
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                            ),
+                            elevation = CardDefaults.cardElevation(3.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp).fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = isSelected,
+                                    onCheckedChange = { checked ->
+                                        selectedDispatchFileIds = if (checked) {
+                                            selectedDispatchFileIds + clRecord.id
+                                        } else {
+                                            selectedDispatchFileIds - clRecord.id
+                                        }
+                                    }
                                 )
-
-                                val filtered = activeCourtCases.filter {
-                                    if (clSearchQuery.isBlank()) true
-                                    else it.serialNo.contains(clSearchQuery, ignoreCase = true) ||
-                                            it.fileNo.contains(clSearchQuery, ignoreCase = true) ||
-                                            it.partyName.contains(clSearchQuery, ignoreCase = true)
-                                }
-
-                                Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
-                                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                        items(filtered) { clRecord ->
-                                            val matchedLocal = allDbRecords.firstOrNull { it.fileNo == clRecord.fileNo }
-                                            Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(3.dp)) {
-                                                Column(modifier = Modifier.padding(10.dp)) {
-                                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                            Text("Sr: ${clRecord.serialNo}", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
-                                                            if (clRecord.statusTag.isNotBlank()) {
-                                                                Badge(containerColor = MaterialTheme.colorScheme.secondaryContainer) {
-                                                                    Text(clRecord.statusTag, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                                                                }
-                                                            }
-                                                            Badge { Text(clRecord.listType) }
-                                                        }
-                                                        Text(clRecord.fileNo, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                                                    }
-
-                                                    Text("${clRecord.caseType} | ${clRecord.partyName}", fontSize = 12.sp, maxLines = 2, modifier = Modifier.padding(vertical = 2.dp))
-
-                                                    Surface(
-                                                        color = if (matchedLocal != null) Color(0xFFE8F5E9) else Color(0xFFFFF3E0),
-                                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                                                    ) {
-                                                        Column(modifier = Modifier.padding(6.dp)) {
-                                                            if (matchedLocal != null) {
-                                                                Text("✓ Local Tracker Status: '${matchedLocal.status}'", fontSize = 11.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
-                                                                if (matchedLocal.storageLocation.isNotBlank()) {
-                                                                    Text("📍 Location: ${matchedLocal.storageLocation}", fontSize = 11.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
-                                                                }
-                                                                if (matchedLocal.remarks.isNotBlank()) {
-                                                                    Text("📝 Remarks: ${matchedLocal.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
-                                                                }
-                                                                if (matchedLocal.reportsOnRecord.isNotBlank()) {
-                                                                    Text("📑 Reports: ${matchedLocal.reportsOnRecord.replace("\n", ", ")}", fontSize = 10.sp, color = Color(0xFF1565C0))
-                                                                }
-                                                                if (matchedLocal.applicationsOnRecord.isNotBlank()) {
-                                                                    Text("📋 Apps: ${matchedLocal.applicationsOnRecord}", fontSize = 10.sp, color = Color(0xFF6A1B9A))
-                                                                }
-                                                            } else {
-                                                                Text("⚠️ File not yet registered in local tracker.", fontSize = 11.sp, color = Color(0xFFE65100))
-                                                            }
-                                                        }
-                                                    }
-
-                                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
-                                                        OutlinedButton(onClick = {
-                                                            scope.launch {
-                                                                val existing = dao.getRecordByFileNo(clRecord.fileNo)
-                                                                val target = existing ?: FileRecord(
-                                                                    id = 0,
-                                                                    fileNo = clRecord.fileNo,
-                                                                    dispatchDate = "",
-                                                                    dispatchDatesCsv = "",
-                                                                    courtNo = "N/A",
-                                                                    serialNo = "",
-                                                                    status = "Unassigned",
-                                                                    storageLocation = "",
-                                                                    historyLog = ""
-                                                                )
-                                                                targetFileForMetaData = target
-                                                            }
-                                                        }) { Text("Add Meta-Data", fontSize = 11.sp) }
-
-                                                        Button(onClick = {
-                                                            fileSerialInput = clRecord.fileSerialNo
-                                                            fileYearInput = clRecord.fileYear
-                                                            courtNoInput = clRecord.courtNo
-                                                            serialNoInput = clRecord.serialNo
-                                                            listTypeInput = clRecord.listType
-                                                            dispatchDateInput = clRecord.causeListDate
-                                                            currentView = "MAIN"
-                                                            Toast.makeText(context, "Direct Dispatch Loaded: ${clRecord.fileNo}", Toast.LENGTH_SHORT).show()
-                                                        }) { Text("Direct Dispatch", fontSize = 11.sp) }
-                                                    }
+                                Column(modifier = Modifier.weight(1f).padding(start = 6.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Text("Sr: ${clRecord.serialNo}", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = MaterialTheme.colorScheme.primary)
+                                            if (clRecord.statusTag.isNotBlank()) {
+                                                Badge(containerColor = MaterialTheme.colorScheme.secondaryContainer) {
+                                                    Text(clRecord.statusTag, color = MaterialTheme.colorScheme.onSecondaryContainer)
                                                 }
+                                            }
+                                            Badge { Text(clRecord.listType) }
+                                        }
+                                        Text(clRecord.fileNo, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    }
+
+                                    Text("${clRecord.caseType} | ${clRecord.partyName}", fontSize = 12.sp, maxLines = 2, modifier = Modifier.padding(vertical = 2.dp))
+
+                                    Surface(
+                                        color = if (matchedLocal != null) Color(0xFFE8F5E9) else Color(0xFFFFF3E0),
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                                    ) {
+                                        Column(modifier = Modifier.padding(4.dp)) {
+                                            if (matchedLocal != null) {
+                                                Text("✓ Local Tracker Status: '${matchedLocal.status}' (Court: ${matchedLocal.courtNo})", fontSize = 10.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
+                                            } else {
+                                                Text("⚠️ File not yet registered in local tracker.", fontSize = 10.sp, color = Color(0xFFE65100))
                                             }
                                         }
                                     }
@@ -677,7 +783,11 @@ fun MainAppScreen(
                             }
                         }
                     }
-
+                }
+            }
+        }
+    }
+}
                     "SEARCH_MENU" -> {
                         Column(modifier = Modifier.fillMaxSize()) {
                             Text("Select Search Method:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
