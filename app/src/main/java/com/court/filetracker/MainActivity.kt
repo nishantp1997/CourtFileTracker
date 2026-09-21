@@ -1949,11 +1949,6 @@ fun CaseCardWithMeta(
     }
 }
 
-/**
- * In-App Cause List Case Status Portal
- * Solves the WebDownloadOrderSheet.do frozen page issue by capturing the PDF stream 
- * generated after captcha submission and opening it via FileProvider.
- */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
@@ -2110,7 +2105,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
             }
         }
 
-        Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
+        Box(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
             AndroidView(
                 factory = { ctx ->
                     WebView(ctx).apply {
@@ -2133,15 +2128,20 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             javaScriptEnabled = true
                             domStorageEnabled = true
                             databaseEnabled = true
+                            
+                            // Desktop Mode Viewport Settings
                             useWideViewPort = true
                             loadWithOverviewMode = true
+                            setSupportZoom(true)
                             builtInZoomControls = true
                             displayZoomControls = false
-                            setSupportZoom(true)
+                            
                             javaScriptCanOpenWindowsAutomatically = true
                             setSupportMultipleWindows(false)
                             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                            userAgentString = "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+                            
+                            // Standard Desktop User Agent to bypass mobile responsive truncation
+                            userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                         }
 
                         setFindListener { activeIndex, matchCount, _ ->
@@ -2169,10 +2169,19 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 isLoading = false
+                                // Force desktop zoom scale adjustment on injection
                                 view?.evaluateJavascript(
                                     """
                                     (function() {
                                         try {
+                                            var meta = document.querySelector('meta[name="viewport"]');
+                                            if (!meta) {
+                                                meta = document.createElement('meta');
+                                                meta.name = 'viewport';
+                                                document.head.appendChild(meta);
+                                            }
+                                            meta.content = 'width=1280, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes';
+                                            
                                             var forms = document.querySelectorAll('form');
                                             for (var i = 0; i < forms.length; i++) {
                                                 forms[i].removeAttribute('target');
@@ -2206,7 +2215,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
 
                                     val streamBytes = conn.inputStream.readBytes()
 
-                                    // Verify PDF magic bytes: %PDF
                                     if (streamBytes.size > 4 && 
                                         streamBytes[0] == 0x25.toByte() && 
                                         streamBytes[1] == 0x50.toByte() && 
@@ -2247,10 +2255,47 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 },
                 modifier = Modifier.fillMaxWidth().fillMaxHeight()
             )
+
+            // Floating quick pan/scroll controls for effortless navigation
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                SmallFloatingActionButton(
+                    onClick = { webView?.scrollTo(webView?.scrollX ?: 0, 0) },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Top", modifier = Modifier.size(18.dp))
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SmallFloatingActionButton(
+                        onClick = { webView?.scrollBy(-300, 0) },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Pan Left", modifier = Modifier.size(14.dp))
+                    }
+
+                    SmallFloatingActionButton(
+                        onClick = { webView?.scrollBy(300, 0) },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Icon(Icons.Default.ArrowForward, contentDescription = "Pan Right", modifier = Modifier.size(14.dp))
+                    }
+                }
+
+                SmallFloatingActionButton(
+                    onClick = { webView?.scrollTo(webView?.scrollX ?: 0, 100000) },
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                ) {
+                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bottom", modifier = Modifier.size(18.dp))
+                }
+            }
         }
     }
 }
-
 /**
  * In-App Web View for "Add Cause List From Web":
  * Compact UI with single-prompt lock per loaded cause list table.
