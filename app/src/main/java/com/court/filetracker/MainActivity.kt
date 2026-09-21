@@ -150,6 +150,7 @@ fun MainAppScreen(
     val currentDate = remember { SimpleDateFormat("dd-MM-yy", Locale.getDefault()).format(Date()) }
 
     var currentView by remember { mutableStateOf("MAIN") }
+    var isDrawerLocked by remember { mutableStateOf(false) }
 
     var selectedMode by remember { mutableStateOf("Dispatched") }
     var dispatchDateInput by remember { mutableStateOf(currentDate) }
@@ -330,10 +331,11 @@ fun MainAppScreen(
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        gesturesEnabled = !isDrawerLocked,
         drawerContent = {
             ModalDrawerSheet {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Court File Tracker Menu", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text("Tracker Pro Menu", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                     NavigationDrawerItem(
@@ -467,7 +469,7 @@ fun MainAppScreen(
                                 "ADD_CAUSE_LIST" -> "Add Cause List Portal"
                                 "DISPATCH_CAUSE_LIST" -> "Dispatch from Cause List"
                                 "REPORTS_PANEL" -> "PDF Reports Engine"
-                                else -> "Allahabad High Court File Tracker"
+                                else -> "Tracker Pro"
                             },
                             fontSize = 16.sp
                         )
@@ -475,6 +477,7 @@ fun MainAppScreen(
                     navigationIcon = {
                         if (currentView != "MAIN") {
                             IconButton(onClick = { 
+                                isDrawerLocked = false
                                 currentView = "MAIN"
                                 activeSearchOption = "NONE"
                                 searchSelectedCourt = null
@@ -498,7 +501,13 @@ fun MainAppScreen(
             ) {
                 when (currentView) {
                     "CAUSE_LIST_PORTAL" -> {
-                        CauseListStatusWebViewContent(onNavigateBack = { currentView = "MAIN" })
+                        CauseListStatusWebViewContent(
+                            onNavigateBack = { 
+                                isDrawerLocked = false
+                                currentView = "MAIN" 
+                            },
+                            onDisableDrawerGestures = { locked -> isDrawerLocked = locked }
+                        )
                     }
 
                     "ADD_CAUSE_LIST" -> {
@@ -1951,7 +1960,10 @@ fun CaseCardWithMeta(
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
+fun CauseListStatusWebViewContent(
+    onNavigateBack: () -> Unit,
+    onDisableDrawerGestures: (Boolean) -> Unit
+) {
     var webView: WebView? by remember { mutableStateOf(null) }
     var isLoading by remember { mutableStateOf(false) }
     var isProcessingPdf by remember { mutableStateOf(false) }
@@ -1964,6 +1976,14 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    // Disable navigation drawer swipe gestures while viewing the portal
+    DisposableEffect(Unit) {
+        onDisableDrawerGestures(true)
+        onDispose {
+            onDisableDrawerGestures(false)
+        }
+    }
+
     BackHandler {
         if (isSearchActive) {
             isSearchActive = false
@@ -1971,6 +1991,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
         } else if (webView?.canGoBack() == true) {
             webView?.goBack()
         } else {
+            onDisableDrawerGestures(false)
             onNavigateBack()
         }
     }
@@ -2004,7 +2025,13 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Button(
-                        onClick = { if (webView?.canGoBack() == true) webView?.goBack() else onNavigateBack() },
+                        onClick = { 
+                            if (webView?.canGoBack() == true) webView?.goBack() 
+                            else {
+                                onDisableDrawerGestures(false)
+                                onNavigateBack()
+                            }
+                        },
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back", modifier = Modifier.size(16.dp))
@@ -2032,7 +2059,10 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                     }
                 }
                 OutlinedButton(
-                    onClick = onNavigateBack,
+                    onClick = {
+                        onDisableDrawerGestures(false)
+                        onNavigateBack()
+                    },
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                 ) {
                     Text("Exit Portal", fontSize = 12.sp)
@@ -2129,7 +2159,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             domStorageEnabled = true
                             databaseEnabled = true
                             
-                            // Desktop Mode Viewport Settings
+                            // Desktop Mode Viewport Configuration
                             useWideViewPort = true
                             loadWithOverviewMode = true
                             setSupportZoom(true)
@@ -2140,7 +2170,7 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                             setSupportMultipleWindows(false)
                             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                             
-                            // Standard Desktop User Agent to bypass mobile responsive truncation
+                            // Full desktop user-agent to avoid mobile responsive truncation
                             userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                         }
 
@@ -2169,7 +2199,6 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 isLoading = false
-                                // Force desktop zoom scale adjustment on injection
                                 view?.evaluateJavascript(
                                     """
                                     (function() {
@@ -2255,47 +2284,11 @@ fun CauseListStatusWebViewContent(onNavigateBack: () -> Unit) {
                 },
                 modifier = Modifier.fillMaxWidth().fillMaxHeight()
             )
-
-            // Floating quick pan/scroll controls for effortless navigation
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                SmallFloatingActionButton(
-                    onClick = { webView?.scrollTo(webView?.scrollX ?: 0, 0) },
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Top", modifier = Modifier.size(18.dp))
-                }
-
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    SmallFloatingActionButton(
-                        onClick = { webView?.scrollBy(-300, 0) },
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Pan Left", modifier = Modifier.size(14.dp))
-                    }
-
-                    SmallFloatingActionButton(
-                        onClick = { webView?.scrollBy(300, 0) },
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Icon(Icons.Default.ArrowForward, contentDescription = "Pan Right", modifier = Modifier.size(14.dp))
-                    }
-                }
-
-                SmallFloatingActionButton(
-                    onClick = { webView?.scrollTo(webView?.scrollX ?: 0, 100000) },
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Bottom", modifier = Modifier.size(18.dp))
-                }
-            }
         }
     }
 }
+
+
 /**
  * In-App Web View for "Add Cause List From Web":
  * Compact UI with single-prompt lock per loaded cause list table.
