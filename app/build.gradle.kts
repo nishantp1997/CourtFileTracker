@@ -9,7 +9,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.court.filetracker.pro"
+        applicationId = "com.court.tracker.pro"
         minSdk = 24
         targetSdk = 34
         versionCode = 2
