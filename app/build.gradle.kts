@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.court.track"
+     namespace = "com.court.filetracker"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.court.track"
+        applicationId = "com.court.filetracker"
         minSdk = 24
         targetSdk = 34
         versionCode = 2
