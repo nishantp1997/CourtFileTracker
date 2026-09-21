@@ -2079,7 +2079,6 @@ fun CauseListStatusWebViewContent(
     onDisableDrawerGestures: (Boolean) -> Unit
 ) {
     var webView: WebView? by remember { mutableStateOf(null) }
-    var currentUrl by remember { mutableStateOf("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist") }
     var isLoading by remember { mutableStateOf(false) }
 
     var isSearchActive by remember { mutableStateOf(false) }
@@ -2105,6 +2104,18 @@ fun CauseListStatusWebViewContent(
         } else {
             onDisableDrawerGestures(false)
             onNavigateBack()
+        }
+    }
+
+    // Helper to open external links (like "View" order sheets) directly in Chrome / system browser
+    fun openInExternalBrowser(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "No web browser found to open link", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -2252,7 +2263,7 @@ fun CauseListStatusWebViewContent(
                             displayZoomControls = false
                             
                             javaScriptCanOpenWindowsAutomatically = true
-                            setSupportMultipleWindows(true) // Enables popup window creation
+                            setSupportMultipleWindows(true)
                             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                             
                             userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -2265,35 +2276,13 @@ fun CauseListStatusWebViewContent(
 
                         webChromeClient = object : WebChromeClient() {
                             override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
-                                // Safely handle new window/tab requests (like clicking "View" for judgments) without crashing
-                                val newWebView = WebView(ctx).apply {
-                                    settings.javaScriptEnabled = true
-                                    settings.useWideViewPort = true
-                                    settings.loadWithOverviewMode = true
-                                    settings.domStorageEnabled = true
-                                    
-                                    webViewClient = object : WebViewClient() {
-                                        override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                            request?.url?.toString()?.let { loadUrl(it) }
-                                            return true
-                                        }
-                                    }
-                                }
-                                
-                                // Display the new window contents directly in the current active WebView view
+                                // Intercept popup/new-tab requests (like clicking "View" judgments) and open in external browser (Chrome)
                                 val transport = resultMsg?.obj as? WebView.WebViewTransport
-                                transport?.webView = newWebView
-                                resultMsg?.sendToTarget()
-
-                                // Load the popup content into our primary view so user can solve captcha and see order
-                                newWebView.webViewClient = object : WebViewClient() {
-                                    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                        val url = request?.url.toString()
-                                        this@apply.loadUrl(url)
-                                        return true
-                                    }
+                                val hitTestResult = view?.hitTestResult
+                                hitTestResult?.extra?.let { url ->
+                                    openInExternalBrowser(url)
                                 }
-                                return true
+                                return false
                             }
 
                             override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
@@ -2333,7 +2322,13 @@ fun CauseListStatusWebViewContent(
                             }
 
                             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                                view?.loadUrl(request?.url.toString())
+                                val url = request?.url.toString()
+                                // If the link is attempting an external popup / view action, open it in Chrome
+                                if (url.contains("order", ignoreCase = true) || url.contains("judgment", ignoreCase = true) || url.contains("popup", ignoreCase = true)) {
+                                    openInExternalBrowser(url)
+                                    return true
+                                }
+                                view?.loadUrl(url)
                                 return true
                             }
 
@@ -2342,7 +2337,7 @@ fun CauseListStatusWebViewContent(
                             }
                         }
 
-                        loadUrl(currentUrl)
+                        loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
                         webView = this
                     }
                 },
