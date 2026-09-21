@@ -8,7 +8,7 @@
     <application
         android:allowBackup="true"
         android:icon="@android:drawable/ic_menu_agenda"
-        android:label="Court File Tracker"
+        android:label="File Tracker Pro"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
