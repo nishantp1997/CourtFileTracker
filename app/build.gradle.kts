@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.cort.tracker.pro"
+    namespace = "com.crt.track"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.cort.tracker.pro"
+        applicationId = "com.crt.track"
         minSdk = 24
         targetSdk = 34
         versionCode = 2
