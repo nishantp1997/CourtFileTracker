@@ -510,45 +510,49 @@ fun MainAppScreen(
                         )
                     }
 
-                    "ADD_CAUSE_LIST" -> {
-                        if (!isClWebActive) {
-                            Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Text("Add Cause List to Tracker", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    OutlinedTextField(
-                                        value = addClCourtInput,
-                                        onValueChange = { addClCourtInput = it },
-                                        label = { Text("Court Number *") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    OutlinedTextField(
-                                        value = addClDateInput,
-                                        onValueChange = { addClDateInput = it },
-                                        label = { Text("Cause List Date (dd-MM-yy) *") },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Button(
-                                        enabled = addClCourtInput.isNotBlank() && addClDateInput.isNotBlank(),
-                                        onClick = { isClWebActive = true },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text("OPEN CAUSE LIST PORTAL")
-                                    }
-                                }
-                            }
-                        } else {
-                            CauseListIngestionWebView(
-                                courtNo = addClCourtInput.trim(),
-                                date = addClDateInput.trim(),
-                                causeListDao = causeListDao,
-                                onClose = { isClWebActive = false }
-                            )
-                        }
-                    }
+"ADD_CAUSE_LIST" -> {
+    if (!isClWebActive) {
+        Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Add Cause List to Tracker", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = addClCourtInput,
+                    onValueChange = { addClCourtInput = it },
+                    label = { Text("Court Number *") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = addClDateInput,
+                    onValueChange = { addClDateInput = it },
+                    label = { Text("Cause List Date (dd-MM-yy) *") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    enabled = addClCourtInput.isNotBlank() && addClDateInput.isNotBlank(),
+                    onClick = { isClWebActive = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("OPEN CAUSE LIST PORTAL")
+                }
+            }
+        }
+    } else {
+        CauseListIngestionWebView(
+            courtNo = addClCourtInput.trim(),
+            date = addClDateInput.trim(),
+            causeListDao = causeListDao,
+            onClose = { 
+                isDrawerLocked = false
+                isClWebActive = false 
+            },
+            onDisableDrawerGestures = { locked -> isDrawerLocked = locked }
+        )
+    }
+}
 
                     "DISPATCH_CAUSE_LIST" -> {
                         Column(modifier = Modifier.fillMaxSize()) {
@@ -2291,7 +2295,7 @@ fun CauseListStatusWebViewContent(
 
 /**
  * In-App Web View for "Add Cause List From Web":
- * Compact UI with single-prompt lock per loaded cause list table.
+ * Upgraded with desktop viewport mode, touch response, and locked drawer gestures.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -2299,7 +2303,8 @@ fun CauseListIngestionWebView(
     courtNo: String,
     date: String,
     causeListDao: CauseListDao,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    onDisableDrawerGestures: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -2310,8 +2315,21 @@ fun CauseListIngestionWebView(
     var lastHandledSignature by remember { mutableStateOf<String?>(null) }
     var hasPromptBeenShownForCurrentView by remember { mutableStateOf(false) }
 
+    // Disable navigation drawer swipe gestures while viewing the ingestion web view
+    DisposableEffect(Unit) {
+        onDisableDrawerGestures(true)
+        onDispose {
+            onDisableDrawerGestures(false)
+        }
+    }
+
     BackHandler {
-        if (webView?.canGoBack() == true) webView?.goBack() else onClose()
+        if (webView?.canGoBack() == true) {
+            webView?.goBack()
+        } else {
+            onDisableDrawerGestures(false)
+            onClose()
+        }
     }
 
     class WebAppInterface {
@@ -2385,7 +2403,10 @@ fun CauseListIngestionWebView(
                     }
 
                     OutlinedButton(
-                        onClick = onClose,
+                        onClick = {
+                            onDisableDrawerGestures(false)
+                            onClose()
+                        },
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Text("Exit", fontSize = 11.sp)
@@ -2406,13 +2427,31 @@ fun CauseListIngestionWebView(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
+
+                        isVerticalScrollBarEnabled = true
+                        isHorizontalScrollBarEnabled = true
+                        isScrollbarFadingEnabled = false
+                        scrollBarStyle = WebView.SCROLLBARS_INSIDE_OVERLAY
+                        overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
+
                         settings.apply {
                             javaScriptEnabled = true
                             domStorageEnabled = true
-                            builtInZoomControls = true
-                            displayZoomControls = false
+                            databaseEnabled = true
+                            
+                            // Desktop Viewport Configuration
                             useWideViewPort = true
                             loadWithOverviewMode = true
+                            setSupportZoom(true)
+                            builtInZoomControls = true
+                            displayZoomControls = false
+                            
+                            javaScriptCanOpenWindowsAutomatically = true
+                            setSupportMultipleWindows(false)
+                            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            
+                            // Standard Desktop User Agent to avoid mobile responsive truncation
+                            userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                         }
 
                         addJavascriptInterface(WebAppInterface(), "AndroidBridge")
@@ -2427,28 +2466,38 @@ fun CauseListIngestionWebView(
                                 view?.evaluateJavascript(
                                     """
                                     (function() {
-                                        var lastSignature = '';
-                                        function checkTable() {
-                                            var div = document.getElementById('CauseListDiv');
-                                            if (div && div.style.display !== 'none') {
-                                                var table = div.querySelector('table.table-causelist');
-                                                if (table && table.rows.length > 2) {
-                                                    var currentSignature = table.rows.length + '_' + table.rows[1].innerText;
-                                                    if (currentSignature !== lastSignature) {
-                                                        lastSignature = currentSignature;
-                                                        AndroidBridge.onCauseListRendered(currentSignature, document.documentElement.outerHTML);
+                                        try {
+                                            var meta = document.querySelector('meta[name="viewport"]');
+                                            if (!meta) {
+                                                meta = document.createElement('meta');
+                                                meta.name = 'viewport';
+                                                document.head.appendChild(meta);
+                                            }
+                                            meta.content = 'width=1280, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes';
+
+                                            var lastSignature = '';
+                                            function checkTable() {
+                                                var div = document.getElementById('CauseListDiv');
+                                                if (div && div.style.display !== 'none') {
+                                                    var table = div.querySelector('table.table-causelist');
+                                                    if (table && table.rows.length > 2) {
+                                                        var currentSignature = table.rows.length + '_' + table.rows[1].innerText;
+                                                        if (currentSignature !== lastSignature) {
+                                                            lastSignature = currentSignature;
+                                                            AndroidBridge.onCauseListRendered(currentSignature, document.documentElement.outerHTML);
+                                                        }
                                                     }
                                                 }
                                             }
-                                        }
-                                        var target = document.getElementById('CauseListDiv');
-                                        if (target) {
-                                            var observer = new MutationObserver(function(mutations) {
-                                                checkTable();
-                                            });
-                                            observer.observe(target, { attributes: true, childList: true, subtree: true });
-                                        }
-                                        setInterval(checkTable, 2500);
+                                            var target = document.getElementById('CauseListDiv');
+                                            if (target) {
+                                                var observer = new MutationObserver(function(mutations) {
+                                                    checkTable();
+                                                });
+                                                observer.observe(target, { attributes: true, childList: true, subtree: true });
+                                            }
+                                            setInterval(checkTable, 2500);
+                                        } catch (e) {}
                                     })();
                                     """.trimIndent(), null
                                 )
@@ -2515,6 +2564,8 @@ fun CauseListIngestionWebView(
         )
     }
 }
+
+
 
 /**
  * Add Case Meta-Data Attachment Dialog
