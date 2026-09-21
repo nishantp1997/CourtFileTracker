@@ -2080,7 +2080,6 @@ fun CauseListStatusWebViewContent(
 ) {
     var webView: WebView? by remember { mutableStateOf(null) }
     var isLoading by remember { mutableStateOf(false) }
-    var isProcessingPdf by remember { mutableStateOf(false) }
 
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -2088,9 +2087,7 @@ fun CauseListStatusWebViewContent(
     var totalMatches by remember { mutableStateOf(0) }
 
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
-    // Disable navigation drawer swipe gestures while viewing the portal
     DisposableEffect(Unit) {
         onDisableDrawerGestures(true)
         onDispose {
@@ -2107,24 +2104,6 @@ fun CauseListStatusWebViewContent(
         } else {
             onDisableDrawerGestures(false)
             onNavigateBack()
-        }
-    }
-
-    fun openPdfFile(file: File) {
-        try {
-            val uri: Uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                file
-            )
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/pdf")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            context.startActivity(Intent.createChooser(intent, "Open Judgment / Order Sheet"))
-        } catch (e: Exception) {
-            Toast.makeText(context, "No PDF viewer app found: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -2237,16 +2216,8 @@ fun CauseListStatusWebViewContent(
             }
         }
 
-        if (isLoading || isProcessingPdf) {
+        if (isLoading) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            if (isProcessingPdf) {
-                Text(
-                    text = "Retrieving Judgment / Order Sheet PDF...",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                )
-            }
         }
 
         Box(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
@@ -2273,7 +2244,6 @@ fun CauseListStatusWebViewContent(
                             domStorageEnabled = true
                             databaseEnabled = true
                             
-                            // Desktop Mode Viewport Configuration
                             useWideViewPort = true
                             loadWithOverviewMode = true
                             setSupportZoom(true)
@@ -2281,10 +2251,9 @@ fun CauseListStatusWebViewContent(
                             displayZoomControls = false
                             
                             javaScriptCanOpenWindowsAutomatically = true
-                            setSupportMultipleWindows(false)
+                            setSupportMultipleWindows(true) // Allows popup/new-window behavior normally
                             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                             
-                            // Full desktop user-agent to avoid mobile responsive truncation
                             userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                         }
 
@@ -2294,6 +2263,14 @@ fun CauseListStatusWebViewContent(
                         }
 
                         webChromeClient = object : WebChromeClient() {
+                            override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
+                                // Allow target="_blank" links/popups to load naturally in the same view like a regular browser
+                                val transport = resultMsg?.obj as? WebView.WebViewTransport
+                                transport?.webView = this@apply
+                                resultMsg?.sendToTarget()
+                                return true
+                            }
+
                             override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
                                 Toast.makeText(ctx, message ?: "Alert", Toast.LENGTH_SHORT).show()
                                 result?.confirm()
@@ -2324,71 +2301,20 @@ fun CauseListStatusWebViewContent(
                                                 document.head.appendChild(meta);
                                             }
                                             meta.content = 'width=1280, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes';
-                                            
-                                            var forms = document.querySelectorAll('form');
-                                            for (var i = 0; i < forms.length; i++) {
-                                                forms[i].removeAttribute('target');
-                                                forms[i].setAttribute('target', '_self');
-                                            }
                                         } catch (e) {}
                                     })();
                                     """.trimIndent(), null
                                 )
                             }
 
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                // Standard browser navigation behavior for all links and pages
+                                view?.loadUrl(request?.url.toString())
+                                return true
+                            }
+
                             override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
                                 handler?.proceed()
-                            }
-                        }
-
-                        setDownloadListener { downloadUrl, userAgent, contentDisposition, mimeType, contentLength ->
-                            isProcessingPdf = true
-                            scope.launch(Dispatchers.IO) {
-                                try {
-                                    val cookie = CookieManager.getInstance().getCookie(downloadUrl)
-                                    val conn = URL(downloadUrl).openConnection() as HttpURLConnection
-                                    conn.connectTimeout = 30000
-                                    conn.readTimeout = 30000
-                                    if (!cookie.isNullOrBlank()) {
-                                        conn.setRequestProperty("Cookie", cookie)
-                                    }
-                                    conn.setRequestProperty("User-Agent", userAgent ?: settings.userAgentString)
-                                    conn.setRequestProperty("Accept", "application/pdf,*/*")
-                                    conn.instanceFollowRedirects = true
-
-                                    val streamBytes = conn.inputStream.readBytes()
-
-                                    if (streamBytes.size > 4 && 
-                                        streamBytes[0] == 0x25.toByte() && 
-                                        streamBytes[1] == 0x50.toByte() && 
-                                        streamBytes[2] == 0x44.toByte() && 
-                                        streamBytes[3] == 0x46.toByte()
-                                    ) {
-                                        val targetDir = File(context.cacheDir, "judgments").apply { if (!exists()) mkdirs() }
-                                        val outFile = File(targetDir, "OrderSheet_${System.currentTimeMillis()}.pdf")
-                                        FileOutputStream(outFile).use { it.write(streamBytes) }
-
-                                        withContext(Dispatchers.Main) {
-                                            isProcessingPdf = false
-                                            openPdfFile(outFile)
-                                        }
-                                    } else {
-                                        withContext(Dispatchers.Main) {
-                                            isProcessingPdf = false
-                                            val preview = String(streamBytes.take(400).toByteArray())
-                                            if (preview.contains("alert(", ignoreCase = true) || preview.contains("invalid", ignoreCase = true)) {
-                                                Toast.makeText(context, "Invalid captcha entered. Please try again.", Toast.LENGTH_LONG).show()
-                                            } else {
-                                                this@apply.loadDataWithBaseURL(downloadUrl, preview, "text/html", "UTF-8", null)
-                                            }
-                                        }
-                                    }
-                                } catch (e: Exception) {
-                                    withContext(Dispatchers.Main) {
-                                        isProcessingPdf = false
-                                        Toast.makeText(context, "Failed to download PDF: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                                    }
-                                }
                             }
                         }
 
@@ -2401,7 +2327,6 @@ fun CauseListStatusWebViewContent(
         }
     }
 }
-
 
 /**
  * In-App Web View for "Add Cause List From Web":
