@@ -2401,7 +2401,6 @@ fun CauseListStatusWebViewContent(
         }
     }
 }
-
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun LiveCaseStatusPortalView(
@@ -2450,7 +2449,7 @@ fun LiveCaseStatusPortalView(
                 if (conn.responseCode == HttpURLConnection.HTTP_OK) {
                     val rawHtml = conn.inputStream.bufferedReader().use { it.readText() }
                     
-                    // Inject stylesheets AND jQuery library so buttons and AJAX scripts become fully interactive
+                    // Added flexbox and alignment rules to properly format headers and buttons
                     val styledHtml = """
                         <!DOCTYPE html>
                         <html lang="en">
@@ -2460,11 +2459,17 @@ fun LiveCaseStatusPortalView(
                             <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/plugins/bootstrap/css/bootstrap.min.css" rel="stylesheet">
                             <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/css/helper.css" rel="stylesheet">
                             <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/css/style.css" rel="stylesheet">
-                            <!-- Include jQuery to power portal button click handlers & AJAX -->
                             <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
                             <style>
                                 body { background-color: #f8f9fa; padding: 15px; font-family: sans-serif; }
                                 .card { background: #fff; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 15px; margin-bottom: 15px; }
+                                /* Proper alignment fixes for portal headers and buttons */
+                                .card-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+                                .card-header h3 { width: 100%; display: flex; justify-content: space-between; align-items: center; margin: 0; }
+                                .pull-left { float: left !important; }
+                                .pull-right { float: right !important; }
+                                .text-center { text-align: center !important; }
+                                .btn { display: inline-block; margin: 2px; }
                             </style>
                         </head>
                         <body>
@@ -2472,7 +2477,6 @@ fun LiveCaseStatusPortalView(
                                 $rawHtml
                             </div>
                             <script>
-                                // Portal helper for order sheets and judgments
                                 function viewOrderSheet(caset, casen, casey) {
                                     var cdata = "ct=" + caset + "&cn=" + casen + "&cy=" + casey;
                                     ${'$'}.ajax({
