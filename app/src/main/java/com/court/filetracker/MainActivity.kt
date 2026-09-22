@@ -2402,10 +2402,6 @@ fun CauseListStatusWebViewContent(
     }
 }
 
-/**
- * Dedicated WebView Portal View for Live Case Status POST Request with cino payload.
- * Matches the exact styling, zoom scaling, and desktop viewport behavior of Cause List Portal.
- */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun LiveCaseStatusPortalView(
@@ -2414,9 +2410,11 @@ fun LiveCaseStatusPortalView(
     onDisableDrawerGestures: (Boolean) -> Unit
 ) {
     var webView: WebView? by remember { mutableStateOf(null) }
-    var isLoading by remember { mutableStateOf(false) }
+    var isLoading by remember { mutableStateOf(true) }
+    var caseDetailsHtml by remember { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     DisposableEffect(Unit) {
         onDisableDrawerGestures(true)
@@ -2432,6 +2430,48 @@ fun LiveCaseStatusPortalView(
             onDisableDrawerGestures(false)
             onNavigateBack()
         }
+    }
+
+    // Fetch case details via POST request to preserve styling and assets
+    fun loadCaseDetails() {
+        isLoading = true
+        scope.launch(Dispatchers.IO) {
+            try {
+                val url = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+                val payload = "cino=$cin"
+                conn.outputStream.use { os ->
+                    os.write(payload.toByteArray(Charsets.UTF_8))
+                }
+
+                if (conn.responseCode == HttpURLConnection.HTTP_OK) {
+                    val htmlResponse = conn.inputStream.bufferedReader().use { it.readText() }
+                    withContext(Dispatchers.Main) {
+                        caseDetailsHtml = htmlResponse
+                        isLoading = false
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        isLoading = false
+                        Toast.makeText(context, "Failed to load case status (Code: ${conn.responseCode})", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    isLoading = false
+                    Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(cin) {
+        loadCaseDetails()
     }
 
     fun openInExternalBrowser(url: String) {
@@ -2475,10 +2515,7 @@ fun LiveCaseStatusPortalView(
                         Text("Back to Dispatch", fontSize = 12.sp)
                     }
                     OutlinedButton(
-                        onClick = { 
-                            val postData = "cino=$cin"
-                            webView?.postUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails", postData.toByteArray(Charsets.UTF_8))
-                        },
+                        onClick = { loadCaseDetails() },
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = "Reload", modifier = Modifier.size(16.dp))
@@ -2561,12 +2598,7 @@ fun LiveCaseStatusPortalView(
                         }
 
                         webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                                isLoading = true
-                            }
-
                             override fun onPageFinished(view: WebView?, url: String?) {
-                                isLoading = false
                                 view?.evaluateJavascript(
                                     """
                                     (function() {
@@ -2598,11 +2630,13 @@ fun LiveCaseStatusPortalView(
                                 handler?.proceed()
                             }
                         }
-
-                        // Execute the POST call with cino payload to load case details in web view panel
-                        val postData = "cino=$cin"
-                        postUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails", postData.toByteArray(Charsets.UTF_8))
                         webView = this
+                    }
+                },
+                update = { view ->
+                    caseDetailsHtml?.let { html ->
+                        // Load with proper base URL so stylesheets, icons, and helper scripts load correctly
+                        view.loadDataWithBaseURL("https://www.allahabadhighcourt.in/apps/status_ccms/", html, "text/html", "UTF-8", "https://www.allahabadhighcourt.in")
                     }
                 },
                 modifier = Modifier.fillMaxWidth().fillMaxHeight()
@@ -2610,7 +2644,6 @@ fun LiveCaseStatusPortalView(
         }
     }
 }
-
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CauseListIngestionWebView(
