@@ -6,7 +6,6 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.util.Base64
 import android.view.ViewGroup
 import android.webkit.*
 import android.widget.Toast
@@ -14,13 +13,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -29,7 +25,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -37,17 +32,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -188,61 +175,19 @@ fun MainAppScreen(
     var selectedClCourtChip by remember { mutableStateOf<String?>(null) }
     var clSearchQuery by remember { mutableStateOf("") }
 
+    // Target CIN to open via POST in web view panel
+    var activePortalCin by remember { mutableStateOf<String?>(null) }
+
     var activeTraceRecord by remember { mutableStateOf<FileRecord?>(null) }
     var activeUpdateRecord by remember { mutableStateOf<FileRecord?>(null) }
     var targetFileForMetaData by remember { mutableStateOf<FileRecord?>(null) }
     var showFlushDialog by remember { mutableStateOf(false) }
-
-    // State for Live Case Details Popup Dialog
-    var liveCaseDetailsHtml by remember { mutableStateOf<String?>(null) }
-    var isFetchingCaseDetails by remember { mutableStateOf(false) }
 
     val normalizedSearchDate = remember(searchDateInput) { normalizeDate(searchDateInput) }
     val normalizedBulkDate = remember(bulkDateInput) { normalizeDate(bulkDateInput) }
     val normalizedReportDate = remember(reportTargetDate) { normalizeDate(reportTargetDate) }
     val normalizedSearchFileNo = remember(searchFileNoInput) { normalizeSearchQuery(searchFileNoInput) }
     val normalizedInterlocatorDate = remember(searchDateInterlocator) { if (searchDateInterlocator.isBlank()) "" else normalizeDate(searchDateInterlocator) }
-
-    fun fetchAndShowCaseDetails(cin: String) {
-        if (cin.isBlank()) {
-            Toast.makeText(context, "No unique CIN available for live lookup.", Toast.LENGTH_SHORT).show()
-            return
-        }
-        isFetchingCaseDetails = true
-        scope.launch(Dispatchers.IO) {
-            try {
-                val url = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-
-                val payload = "cino=$cin"
-                conn.outputStream.use { os ->
-                    os.write(payload.toByteArray(Charsets.UTF_8))
-                }
-
-                if (conn.responseCode == HttpURLConnection.HTTP_OK) {
-                    val responseHtml = conn.inputStream.bufferedReader().use { it.readText() }
-                    withContext(Dispatchers.Main) {
-                        isFetchingCaseDetails = false
-                        liveCaseDetailsHtml = responseHtml
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        isFetchingCaseDetails = false
-                        Toast.makeText(context, "Failed to fetch details (Server Code: ${conn.responseCode})", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                withContext(Dispatchers.Main) {
-                    isFetchingCaseDetails = false
-                    Toast.makeText(context, "Network Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }
-    }
 
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
@@ -411,6 +356,7 @@ fun MainAppScreen(
                         label = { Text("Cause List Portal") },
                         selected = currentView == "CAUSE_LIST_PORTAL",
                         onClick = {
+                            activePortalCin = null
                             currentView = "CAUSE_LIST_PORTAL"
                             scope.launch { drawerState.close() }
                         },
@@ -507,6 +453,7 @@ fun MainAppScreen(
                                 "ADD_CAUSE_LIST" -> "Add Cause List Portal"
                                 "DISPATCH_CAUSE_LIST" -> "Dispatch from Cause List"
                                 "REPORTS_PANEL" -> "PDF Reports Engine"
+                                "LIVE_CASE_STATUS" -> "Case Status Details"
                                 else -> "Tracker Pro"
                             },
                             fontSize = 16.sp
@@ -516,6 +463,7 @@ fun MainAppScreen(
                         if (currentView != "MAIN") {
                             IconButton(onClick = { 
                                 isDrawerLocked = false
+                                activePortalCin = null
                                 currentView = "MAIN"
                                 activeSearchOption = "NONE"
                                 searchSelectedCourt = null
@@ -535,7 +483,7 @@ fun MainAppScreen(
                 modifier = Modifier
                     .padding(padding)
                     .fillMaxSize()
-                    .then(if (currentView == "ADD_CAUSE_LIST" || currentView == "CAUSE_LIST_PORTAL") Modifier else Modifier.padding(12.dp))
+                    .then(if (currentView == "ADD_CAUSE_LIST" || currentView == "CAUSE_LIST_PORTAL" || currentView == "LIVE_CASE_STATUS") Modifier else Modifier.padding(12.dp))
             ) {
                 when (currentView) {
                     "CAUSE_LIST_PORTAL" -> {
@@ -543,6 +491,18 @@ fun MainAppScreen(
                             onNavigateBack = { 
                                 isDrawerLocked = false
                                 currentView = "MAIN" 
+                            },
+                            onDisableDrawerGestures = { locked -> isDrawerLocked = locked }
+                        )
+                    }
+
+                    "LIVE_CASE_STATUS" -> {
+                        LiveCaseStatusPortalView(
+                            cin = activePortalCin ?: "",
+                            onNavigateBack = {
+                                isDrawerLocked = false
+                                activePortalCin = null
+                                currentView = "DISPATCH_CAUSE_LIST"
                             },
                             onDisableDrawerGestures = { locked -> isDrawerLocked = locked }
                         )
@@ -793,14 +753,19 @@ fun MainAppScreen(
                                                                 }
                                                                 Badge { Text(clRecord.listType) }
                                                             }
-                                                            // Clickable case number triggering live backend POST lookup
+                                                            // Clickable case number: triggers POST call with cino payload and opens in portal web view
                                                             Text(
                                                                 text = clRecord.fileNo,
                                                                 fontWeight = FontWeight.Bold,
                                                                 fontSize = 14.sp,
                                                                 color = MaterialTheme.colorScheme.primary,
                                                                 modifier = Modifier.clickable {
-                                                                    fetchAndShowCaseDetails(clRecord.caseCin)
+                                                                    if (clRecord.caseCin.isNotBlank()) {
+                                                                        activePortalCin = clRecord.caseCin
+                                                                        currentView = "LIVE_CASE_STATUS"
+                                                                    } else {
+                                                                        Toast.makeText(context, "No CIN available for this case.", Toast.LENGTH_SHORT).show()
+                                                                    }
                                                                 }
                                                             )
                                                         }
@@ -1695,43 +1660,6 @@ fun MainAppScreen(
         }
     }
 
-    // Loading or Result Dialog for Live Case Details
-    if (isFetchingCaseDetails) {
-        Dialog(onDismissRequest = {}) {
-            Card(modifier = Modifier.padding(16.dp)) {
-                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                    Text("Fetching live case status from portal...")
-                }
-            }
-        }
-    }
-
-    liveCaseDetailsHtml?.let { html ->
-        AlertDialog(
-            onDismissRequest = { liveCaseDetailsHtml = null },
-            title = { Text("Live Case Details") },
-            text = {
-                Box(modifier = Modifier.height(350.dp).fillMaxWidth()) {
-                    AndroidView(
-                        factory = { ctx ->
-                            WebView(ctx).apply {
-                                settings.javaScriptEnabled = true
-                                loadDataWithBaseURL("https://www.allahabadhighcourt.in", html, "text/html", "UTF-8", null)
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = { liveCaseDetailsHtml = null }) {
-                    Text("Close")
-                }
-            }
-        )
-    }
-
     if (showBulkReceivedDialog) {
         var selectedLocation by remember { mutableStateOf("Listing Seat") }
         var dropdownExpanded by remember { mutableStateOf(false) }
@@ -2474,6 +2402,215 @@ fun CauseListStatusWebViewContent(
     }
 }
 
+/**
+ * Dedicated WebView Portal View for Live Case Status POST Request with cino payload.
+ * Matches the exact styling, zoom scaling, and desktop viewport behavior of Cause List Portal.
+ */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun LiveCaseStatusPortalView(
+    cin: String,
+    onNavigateBack: () -> Unit,
+    onDisableDrawerGestures: (Boolean) -> Unit
+) {
+    var webView: WebView? by remember { mutableStateOf(null) }
+    var isLoading by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+
+    DisposableEffect(Unit) {
+        onDisableDrawerGestures(true)
+        onDispose {
+            onDisableDrawerGestures(false)
+        }
+    }
+
+    BackHandler {
+        if (webView?.canGoBack() == true) {
+            webView?.goBack()
+        } else {
+            onDisableDrawerGestures(false)
+            onNavigateBack()
+        }
+    }
+
+    fun openInExternalBrowser(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                setPackage("com.android.chrome")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (ex: Exception) {
+                Toast.makeText(context, "No web browser found to open link", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(
+                        onClick = { 
+                            onDisableDrawerGestures(false)
+                            onNavigateBack()
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Back to Dispatch", fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { 
+                            val postData = "cino=$cin"
+                            webView?.postUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails", postData.toByteArray(Charsets.UTF_8))
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Reload", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Reload", fontSize = 12.sp)
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        onDisableDrawerGestures(false)
+                        onNavigateBack()
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text("Exit Portal", fontSize = 12.sp)
+                }
+            }
+        }
+
+        if (isLoading) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+
+        Box(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+
+                        isVerticalScrollBarEnabled = true
+                        isHorizontalScrollBarEnabled = true
+                        isScrollbarFadingEnabled = false
+                        scrollBarStyle = WebView.SCROLLBARS_INSIDE_OVERLAY
+                        overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
+
+                        val cookieManager = CookieManager.getInstance()
+                        cookieManager.setAcceptCookie(true)
+                        cookieManager.setAcceptThirdPartyCookies(this, true)
+
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            databaseEnabled = true
+                            
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
+                            setSupportZoom(true)
+                            builtInZoomControls = true
+                            displayZoomControls = false
+                            
+                            javaScriptCanOpenWindowsAutomatically = true
+                            setSupportMultipleWindows(true)
+                            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            
+                            userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                        }
+
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
+                                val hitTestResult = view?.hitTestResult
+                                hitTestResult?.extra?.let { url ->
+                                    openInExternalBrowser(url)
+                                }
+                                return false
+                            }
+
+                            override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                Toast.makeText(ctx, message ?: "Alert", Toast.LENGTH_SHORT).show()
+                                result?.confirm()
+                                return true
+                            }
+
+                            override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                result?.confirm()
+                                return true
+                            }
+                        }
+
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                isLoading = true
+                            }
+
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                isLoading = false
+                                view?.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        try {
+                                            var meta = document.querySelector('meta[name="viewport"]');
+                                            if (!meta) {
+                                                meta = document.createElement('meta');
+                                                meta.name = 'viewport';
+                                                document.head.appendChild(meta);
+                                            }
+                                            meta.content = 'width=1280, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes';
+                                        } catch (e) {}
+                                    })();
+                                    """.trimIndent(), null
+                                )
+                            }
+
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                val url = request?.url.toString()
+                                if (url.contains("order", ignoreCase = true) || url.contains("judgment", ignoreCase = true) || url.contains("popup", ignoreCase = true)) {
+                                    openInExternalBrowser(url)
+                                    return true
+                                }
+                                view?.loadUrl(url)
+                                return true
+                            }
+
+                            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
+                                handler?.proceed()
+                            }
+                        }
+
+                        // Execute the POST call with cino payload to load case details in web view panel
+                        val postData = "cino=$cin"
+                        postUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails", postData.toByteArray(Charsets.UTF_8))
+                        webView = this
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().fillMaxHeight()
+            )
+        }
+    }
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CauseListIngestionWebView(
@@ -2554,9 +2691,10 @@ fun CauseListIngestionWebView(
                                         val parsed = WebCauseListParser.parseHtmlCauseList(unescaped, courtNo, date)
                                         if (parsed.isNotEmpty()) {
                                             causeListDao.insertAll(parsed)
+                                            val detectedType = parsed.firstOrNull()?.listType ?: "DCL"
                                             withContext(Dispatchers.Main) {
                                                 isImporting = false
-                                                Toast.makeText(context, "Successfully Imported ${parsed.size} Cases (${parsed.firstOrNull()?.listType ?: ""})!", Toast.LENGTH_LONG).show()
+                                                Toast.makeText(context, "Successfully Imported ${parsed.size} Cases (${detectedType})!", Toast.LENGTH_LONG).show()
                                             }
                                         } else {
                                             withContext(Dispatchers.Main) {
@@ -2712,7 +2850,7 @@ fun CauseListIngestionWebView(
                                     val detectedType = parsedRecords.firstOrNull()?.listType ?: "DCL"
                                     withContext(Dispatchers.Main) {
                                         isImporting = false
-                                        Toast.makeText(context, "Imported ${parsedRecords.size} Cases as '$detectedType'!", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "Successfully Imported ${parsedRecords.size} Cases (${detectedType})!", Toast.LENGTH_LONG).show()
                                     }
                                 } else {
                                     withContext(Dispatchers.Main) {
