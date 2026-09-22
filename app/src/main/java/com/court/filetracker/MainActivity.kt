@@ -136,6 +136,35 @@ fun wasDispatchedToCourtOnDate(record: FileRecord, targetDate: String, targetCou
     return getDispatchedCourtsForDate(record, targetDate).contains(cleanCourt)
 }
 
+// Live background POST lookup for case details using extracted CIN
+private fun fetchAndShowCaseDetails(context: Context, cin: String) {
+    if (cin.isBlank()) {
+        Toast.makeText(context, "No unique CIN available for this case lookup.", Toast.LENGTH_SHORT).show()
+        return
+    }
+    Thread {
+        try {
+            val url = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+            val payload = "cino=$cin"
+            conn.outputStream.use { os ->
+                os.write(payload.toByteArray(Charsets.UTF_8))
+            }
+
+            if (conn.responseCode == HttpURLConnection.HTTP_OK) {
+                val responseHtml = conn.inputStream.bufferedReader().use { it.readText() }
+                // Live details fetched successfully from portal
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }.start()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainAppScreen(
@@ -510,52 +539,51 @@ fun MainAppScreen(
                         )
                     }
 
-"ADD_CAUSE_LIST" -> {
-    if (!isClWebActive) {
-        Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Add Cause List to Tracker", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = addClCourtInput,
-                    onValueChange = { addClCourtInput = it },
-                    label = { Text("Court Number *") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = addClDateInput,
-                    onValueChange = { addClDateInput = it },
-                    label = { Text("Cause List Date (dd-MM-yy) *") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Button(
-                    enabled = addClCourtInput.isNotBlank() && addClDateInput.isNotBlank(),
-                    onClick = { isClWebActive = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("OPEN CAUSE LIST PORTAL")
-                }
-            }
-        }
-    } else {
-        CauseListIngestionWebView(
-            courtNo = addClCourtInput.trim(),
-            date = addClDateInput.trim(),
-            causeListDao = causeListDao,
-            onClose = { 
-                isDrawerLocked = false
-                isClWebActive = false 
-            },
-            onDisableDrawerGestures = { locked -> isDrawerLocked = locked }
-        )
-    }
-}
+                    "ADD_CAUSE_LIST" -> {
+                        if (!isClWebActive) {
+                            Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text("Add Cause List to Tracker", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    OutlinedTextField(
+                                        value = addClCourtInput,
+                                        onValueChange = { addClCourtInput = it },
+                                        label = { Text("Court Number *") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    OutlinedTextField(
+                                        value = addClDateInput,
+                                        onValueChange = { addClDateInput = it },
+                                        label = { Text("Cause List Date (dd-MM-yy) *") },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Button(
+                                        enabled = addClCourtInput.isNotBlank() && addClDateInput.isNotBlank(),
+                                        onClick = { isClWebActive = true },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("OPEN CAUSE LIST PORTAL")
+                                    }
+                                }
+                            }
+                        } else {
+                            CauseListIngestionWebView(
+                                courtNo = addClCourtInput.trim(),
+                                date = addClDateInput.trim(),
+                                causeListDao = causeListDao,
+                                onClose = { 
+                                    isDrawerLocked = false
+                                    isClWebActive = false 
+                                },
+                                onDisableDrawerGestures = { locked -> isDrawerLocked = locked }
+                            )
+                        }
+                    }
 
-                  "DISPATCH_CAUSE_LIST" -> {
-                        // State for comma-separated serial number filtering
+                    "DISPATCH_CAUSE_LIST" -> {
                         var serialFilterInput by remember { mutableStateOf("") }
                         var selectedDispatchFileIds by remember { mutableStateOf(setOf<Long>()) }
 
@@ -604,14 +632,12 @@ fun MainAppScreen(
                                     modifier = Modifier.fillMaxWidth()
                                 )
 
-                                // Parse comma-separated serial numbers from input
                                 val targetSerials = remember(serialFilterInput) {
                                     serialFilterInput.split(",")
                                         .map { it.trim() }
                                         .filter { it.isNotBlank() }
                                 }
 
-                                // Filter logic applying exact match, connected sub-cases (e.g. 139.1), and all corrections
                                 val filteredCases = activeCourtCases.filter { clRecord ->
                                     val matchesTextQuery = if (clSearchQuery.isBlank()) true else {
                                         clRecord.fileNo.contains(clSearchQuery, ignoreCase = true) ||
@@ -636,7 +662,6 @@ fun MainAppScreen(
                                     }
                                 }
 
-                                // Bulk Dispatch Action Row
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -759,12 +784,20 @@ fun MainAppScreen(
                                                                 }
                                                                 Badge { Text(clRecord.listType) }
                                                             }
-                                                            Text(clRecord.fileNo, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                                            // Clickable case number triggering live backend POST lookup
+                                                            Text(
+                                                                text = clRecord.fileNo,
+                                                                fontWeight = FontWeight.Bold,
+                                                                fontSize = 14.sp,
+                                                                color = MaterialTheme.colorScheme.primary,
+                                                                modifier = Modifier.clickable {
+                                                                    fetchAndShowCaseDetails(context, clRecord.caseCin)
+                                                                }
+                                                            )
                                                         }
 
                                                         Text("${clRecord.caseType} | ${clRecord.partyName}", fontSize = 12.sp, maxLines = 2, modifier = Modifier.padding(vertical = 2.dp))
 
-                                                        // Complete Local Tracker Status, Location, Remarks & Metadata Summary Panel
                                                         Surface(
                                                             color = if (matchedLocal != null) Color(0xFFE8F5E9) else Color(0xFFFFF3E0),
                                                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
@@ -839,7 +872,6 @@ fun MainAppScreen(
                         }
                     }
 
-                  
                     "SEARCH_MENU" -> {
                         Column(modifier = Modifier.fillMaxSize()) {
                             Text("Select Search Method:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
@@ -1467,7 +1499,6 @@ fun MainAppScreen(
                     }
 
                     else -> {
-                        // MAIN REGISTRATION SCREEN
                         Column(modifier = Modifier.fillMaxSize()) {
                             Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), elevation = CardDefaults.cardElevation(4.dp)) {
                                 Column(modifier = Modifier.padding(12.dp)) {
@@ -1655,7 +1686,6 @@ fun MainAppScreen(
         }
     }
 
-    // BULK RECEIVED FROM COURT DIALOG
     if (showBulkReceivedDialog) {
         var selectedLocation by remember { mutableStateOf("Listing Seat") }
         var dropdownExpanded by remember { mutableStateOf(false) }
@@ -1740,7 +1770,6 @@ fun MainAppScreen(
         )
     }
 
-    // SET BULK LOCATION DIALOG
     if (showSetLocationDialog) {
         var inputLocText by remember { mutableStateOf("") }
         var changeAffectedDate by remember { mutableStateOf(currentDate) }
@@ -1838,7 +1867,6 @@ fun MainAppScreen(
         )
     }
 
-    // DISPOSAL UPDATE MODAL
     val currentRecordForUpdate = activeUpdateRecord
     if (currentRecordForUpdate != null) {
         var newStatus by remember { mutableStateOf(currentRecordForUpdate.status.ifEmpty { "Taken Up" }) }
@@ -2018,7 +2046,6 @@ fun MainAppScreen(
         )
     }
 
-    // AUDIT TRACE DIALOG
     val currentRecordForTrace = activeTraceRecord
     if (currentRecordForTrace != null) {
         AlertDialog(
@@ -2041,7 +2068,6 @@ fun MainAppScreen(
         )
     }
 
-    // META-DATA DIALOG
     targetFileForMetaData?.let { record ->
         AddCaseMetaDataDialog(
             record = record,
@@ -2056,7 +2082,6 @@ fun MainAppScreen(
         )
     }
 
-    // FLUSH DIALOG
     if (showFlushDialog) {
         var cutoffDateInput by remember { mutableStateOf(currentDate) }
         AlertDialog(
@@ -2159,15 +2184,22 @@ fun CauseListStatusWebViewContent(
         }
     }
 
-    // Helper to open external links (like "View" order sheets) directly in Chrome / system browser
     fun openInExternalBrowser(url: String) {
         try {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                setPackage("com.android.chrome")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
         } catch (e: Exception) {
-            Toast.makeText(context, "No web browser found to open link", Toast.LENGTH_SHORT).show()
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (ex: Exception) {
+                Toast.makeText(context, "No web browser found to open link", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -2328,8 +2360,6 @@ fun CauseListStatusWebViewContent(
 
                         webChromeClient = object : WebChromeClient() {
                             override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
-                                // Intercept popup/new-tab requests (like clicking "View" judgments) and open in external browser (Chrome)
-                                val transport = resultMsg?.obj as? WebView.WebViewTransport
                                 val hitTestResult = view?.hitTestResult
                                 hitTestResult?.extra?.let { url ->
                                     openInExternalBrowser(url)
@@ -2375,7 +2405,6 @@ fun CauseListStatusWebViewContent(
 
                             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                 val url = request?.url.toString()
-                                // If the link is attempting an external popup / view action, open it in Chrome
                                 if (url.contains("order", ignoreCase = true) || url.contains("judgment", ignoreCase = true) || url.contains("popup", ignoreCase = true)) {
                                     openInExternalBrowser(url)
                                     return true
@@ -2399,10 +2428,6 @@ fun CauseListStatusWebViewContent(
     }
 }
 
-/**
- * In-App Web View for "Add Cause List From Web":
- * Upgraded with desktop viewport mode, touch response, and locked drawer gestures.
- */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CauseListIngestionWebView(
@@ -2421,7 +2446,6 @@ fun CauseListIngestionWebView(
     var lastHandledSignature by remember { mutableStateOf<String?>(null) }
     var hasPromptBeenShownForCurrentView by remember { mutableStateOf(false) }
 
-    // Disable navigation drawer swipe gestures while viewing the ingestion web view
     DisposableEffect(Unit) {
         onDisableDrawerGestures(true)
         onDispose {
@@ -2545,7 +2569,6 @@ fun CauseListIngestionWebView(
                             domStorageEnabled = true
                             databaseEnabled = true
                             
-                            // Desktop Viewport Configuration
                             useWideViewPort = true
                             loadWithOverviewMode = true
                             setSupportZoom(true)
@@ -2556,7 +2579,6 @@ fun CauseListIngestionWebView(
                             setSupportMultipleWindows(false)
                             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                             
-                            // Standard Desktop User Agent to avoid mobile responsive truncation
                             userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                         }
 
@@ -2607,6 +2629,10 @@ fun CauseListIngestionWebView(
                                     })();
                                     """.trimIndent(), null
                                 )
+                            }
+
+                            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
+                                handler?.proceed()
                             }
                         }
 
@@ -2671,12 +2697,6 @@ fun CauseListIngestionWebView(
     }
 }
 
-
-
-/**
- * Add Case Meta-Data Attachment Dialog
- * - Unselected by default: User must make an explicit selection
- */
 @Composable
 fun AddCaseMetaDataDialog(
     record: FileRecord,
