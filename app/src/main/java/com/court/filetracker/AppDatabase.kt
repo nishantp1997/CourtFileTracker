@@ -43,7 +43,7 @@ interface CauseListDao {
     suspend fun deleteCauseListsUpToDate(cutoffDate: String): Int
 }
 
-@Database(entities = [FileRecord::class, CauseListRecord::class], version = 2, exportSchema = false)
+@Database(entities = [FileRecord::class, CauseListRecord::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileRecordDao(): FileRecordDao
     abstract fun causeListDao(): CauseListDao
