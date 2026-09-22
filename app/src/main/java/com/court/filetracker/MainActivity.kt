@@ -41,7 +41,6 @@ import java.util.Locale
 import java.net.URL
 import java.net.HttpURLConnection
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
