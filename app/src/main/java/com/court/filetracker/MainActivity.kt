@@ -2432,7 +2432,6 @@ fun LiveCaseStatusPortalView(
         }
     }
 
-    // Fetch case details via POST request to preserve styling and assets
     fun loadCaseDetails() {
         isLoading = true
         scope.launch(Dispatchers.IO) {
@@ -2449,9 +2448,33 @@ fun LiveCaseStatusPortalView(
                 }
 
                 if (conn.responseCode == HttpURLConnection.HTTP_OK) {
-                    val htmlResponse = conn.inputStream.bufferedReader().use { it.readText() }
+                    val rawHtml = conn.inputStream.bufferedReader().use { it.readText() }
+                    
+                    // Inject full HTML wrapper and official portal stylesheets so styles apply correctly
+                    val styledHtml = """
+                        <!DOCTYPE html>
+                        <html lang="en">
+                        <head>
+                            <meta charset="UTF-8">
+                            <meta name="viewport" content="width=1280, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes">
+                            <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/plugins/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+                            <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/css/helper.css" rel="stylesheet">
+                            <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/css/style.css" rel="stylesheet">
+                            <style>
+                                body { background-color: #f8f9fa; padding: 15px; font-family: sans-serif; }
+                                .card { background: #fff; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 15px; margin-bottom: 15px; }
+                            </style>
+                        </head>
+                        <body>
+                            <div class="container-fluid">
+                                $rawHtml
+                            </div>
+                        </body>
+                        </html>
+                    """.trimIndent()
+
                     withContext(Dispatchers.Main) {
-                        caseDetailsHtml = htmlResponse
+                        caseDetailsHtml = styledHtml
                         isLoading = false
                     }
                 } else {
@@ -2598,27 +2621,9 @@ fun LiveCaseStatusPortalView(
                         }
 
                         webViewClient = object : WebViewClient() {
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                view?.evaluateJavascript(
-                                    """
-                                    (function() {
-                                        try {
-                                            var meta = document.querySelector('meta[name="viewport"]');
-                                            if (!meta) {
-                                                meta = document.createElement('meta');
-                                                meta.name = 'viewport';
-                                                document.head.appendChild(meta);
-                                            }
-                                            meta.content = 'width=1280, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes';
-                                        } catch (e) {}
-                                    })();
-                                    """.trimIndent(), null
-                                )
-                            }
-
                             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                 val url = request?.url.toString()
-                                if (url.contains("order", ignoreCase = true) || url.contains("judgment", ignoreCase = true) || url.contains("popup", ignoreCase = true)) {
+                                if (url.contains("order", ignoreCase = true) || url.contains("judgment", ignoreCase = true) || url.contains("popup", ignoreCase = true) || url.contains("get-order-sheets", ignoreCase = true)) {
                                     openInExternalBrowser(url)
                                     return true
                                 }
@@ -2635,8 +2640,7 @@ fun LiveCaseStatusPortalView(
                 },
                 update = { view ->
                     caseDetailsHtml?.let { html ->
-                        // Load with proper base URL so stylesheets, icons, and helper scripts load correctly
-                        view.loadDataWithBaseURL("https://www.allahabadhighcourt.in/apps/status_ccms/", html, "text/html", "UTF-8", "https://www.allahabadhighcourt.in")
+                        view.loadDataWithBaseURL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails", html, "text/html", "UTF-8", "https://www.allahabadhighcourt.in")
                     }
                 },
                 modifier = Modifier.fillMaxWidth().fillMaxHeight()
@@ -2644,6 +2648,8 @@ fun LiveCaseStatusPortalView(
         }
     }
 }
+
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CauseListIngestionWebView(
