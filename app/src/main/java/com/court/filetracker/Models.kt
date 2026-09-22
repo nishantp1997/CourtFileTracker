@@ -3,6 +3,7 @@ package com.court.filetracker
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import com.google.gson.annotations.SerializedName
 
 @Entity(
     tableName = "file_records",
@@ -43,7 +44,8 @@ data class CauseListRecord(
     val fileYear: String,              // "2026"
     val fileNo: String,                // "11000/2026"
     val partyName: String = "",        // "P1 VS P2"
-    val caseCin: String = ""           // Unique CIN extracted from viewCaseData('CIN')
+    @SerializedName(value = "caseCin", alternate = ["cin"])
+    val caseCin: String = ""           // Safe default prevents null deserialization crash on old backups
 )
 
 data class FullDatabaseBackupPayload(
