@@ -2450,7 +2450,7 @@ fun LiveCaseStatusPortalView(
                 if (conn.responseCode == HttpURLConnection.HTTP_OK) {
                     val rawHtml = conn.inputStream.bufferedReader().use { it.readText() }
                     
-                    // Inject full HTML wrapper and official portal stylesheets so styles apply correctly
+                    // Inject stylesheets AND jQuery library so buttons and AJAX scripts become fully interactive
                     val styledHtml = """
                         <!DOCTYPE html>
                         <html lang="en">
@@ -2460,15 +2460,35 @@ fun LiveCaseStatusPortalView(
                             <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/plugins/bootstrap/css/bootstrap.min.css" rel="stylesheet">
                             <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/css/helper.css" rel="stylesheet">
                             <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/css/style.css" rel="stylesheet">
+                            <!-- Include jQuery to power portal button click handlers & AJAX -->
+                            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
                             <style>
                                 body { background-color: #f8f9fa; padding: 15px; font-family: sans-serif; }
                                 .card { background: #fff; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 15px; margin-bottom: 15px; }
                             </style>
                         </head>
                         <body>
-                            <div class="container-fluid">
+                            <div class="container-fluid" id="printpanel">
                                 $rawHtml
                             </div>
+                            <script>
+                                // Portal helper for order sheets and judgments
+                                function viewOrderSheet(caset, casen, casey) {
+                                    var cdata = "ct=" + caset + "&cn=" + casen + "&cy=" + casey;
+                                    ${'$'}.ajax({
+                                        url: 'https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get-order-sheets',
+                                        method: 'post',
+                                        data: cdata,
+                                        success: function(response) {
+                                            if ($('#viewOrderDiv').length) {
+                                                $('#viewOrderDiv').html(response);
+                                            } else {
+                                                $('body').append('<div id="viewOrderDiv" style="margin-top:20px;">' + response + '</div>');
+                                            }
+                                        }
+                                    });
+                                }
+                            </script>
                         </body>
                         </html>
                     """.trimIndent()
