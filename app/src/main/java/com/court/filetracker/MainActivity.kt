@@ -38,6 +38,11 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.net.URL
+import java.net.HttpURLConnection
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -755,19 +760,19 @@ fun MainAppScreen(
                                                             }
                                                             // Clickable case number: triggers POST call with cino payload and opens in portal web view
                                                             Text(
-                                                                text = clRecord.fileNo,
-                                                                fontWeight = FontWeight.Bold,
-                                                                fontSize = 14.sp,
-                                                                color = MaterialTheme.colorScheme.primary,
-                                                                modifier = Modifier.clickable {
-                                                                    if (clRecord.caseCin.isNotBlank()) {
-                                                                        activePortalCin = clRecord.caseCin
-                                                                        currentView = "LIVE_CASE_STATUS"
-                                                                    } else {
-                                                                        Toast.makeText(context, "No CIN available for this case.", Toast.LENGTH_SHORT).show()
-                                                                    }
-                                                                }
-                                                            )
+    text = clRecord.fileNo,
+    fontWeight = FontWeight.Bold,
+    fontSize = 14.sp,
+    color = MaterialTheme.colorScheme.primary,
+    modifier = Modifier.clickable {
+        if (!clRecord.caseCin.isNullOrBlank()) {
+            activePortalCin = clRecord.caseCin
+            currentView = "LIVE_CASE_STATUS"
+        } else {
+            Toast.makeText(context, "No CIN available for this case.", Toast.LENGTH_SHORT).show()
+        }
+    }
+)
                                                         }
 
                                                         Text("${clRecord.caseType} | ${clRecord.partyName}", fontSize = 12.sp, maxLines = 2, modifier = Modifier.padding(vertical = 2.dp))
