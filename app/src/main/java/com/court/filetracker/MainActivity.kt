@@ -94,12 +94,6 @@ fun normalizeDate(input: String): String = input.trim()
 fun normalizeSearchQuery(input: String): String = input.trim()
 fun stripLeadingZeros(input: String): String = input.trim().trimStart('0').ifEmpty { "0" }
 
-/**
- * True Historical Multi-Date Dispatch Tracking Engine
- * Scans the immutable audit log for dispatch events matching [targetDate].
- * Even if a file's current status is "Not Sent to Court" or moved elsewhere today,
- * if it was dispatched on targetDate, it will correctly appear.
- */
 fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<String> {
     val courtsFound = mutableSetOf<String>()
     val targetTag = "[$targetDate]"
@@ -121,7 +115,6 @@ fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<Stri
         }
     }
 
-    // Fallback check against dispatchDatesCsv if logged dates exist
     if (courtsFound.isEmpty() && record.dispatchDatesCsv.split(",").map { it.trim() }.contains(targetDate)) {
         if (record.courtNo != "N/A" && record.courtNo.isNotBlank()) {
             courtsFound.add(stripLeadingZeros(record.courtNo))
@@ -134,35 +127,6 @@ fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<Stri
 fun wasDispatchedToCourtOnDate(record: FileRecord, targetDate: String, targetCourt: String): Boolean {
     val cleanCourt = stripLeadingZeros(targetCourt)
     return getDispatchedCourtsForDate(record, targetDate).contains(cleanCourt)
-}
-
-// Live background POST lookup for case details using extracted CIN
-private fun fetchAndShowCaseDetails(context: Context, cin: String) {
-    if (cin.isBlank()) {
-        Toast.makeText(context, "No unique CIN available for this case lookup.", Toast.LENGTH_SHORT).show()
-        return
-    }
-    Thread {
-        try {
-            val url = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-
-            val payload = "cino=$cin"
-            conn.outputStream.use { os ->
-                os.write(payload.toByteArray(Charsets.UTF_8))
-            }
-
-            if (conn.responseCode == HttpURLConnection.HTTP_OK) {
-                val responseHtml = conn.inputStream.bufferedReader().use { it.readText() }
-                // Live details fetched successfully from portal
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }.start()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -229,11 +193,56 @@ fun MainAppScreen(
     var targetFileForMetaData by remember { mutableStateOf<FileRecord?>(null) }
     var showFlushDialog by remember { mutableStateOf(false) }
 
+    // State for Live Case Details Popup Dialog
+    var liveCaseDetailsHtml by remember { mutableStateOf<String?>(null) }
+    var isFetchingCaseDetails by remember { mutableStateOf(false) }
+
     val normalizedSearchDate = remember(searchDateInput) { normalizeDate(searchDateInput) }
     val normalizedBulkDate = remember(bulkDateInput) { normalizeDate(bulkDateInput) }
     val normalizedReportDate = remember(reportTargetDate) { normalizeDate(reportTargetDate) }
     val normalizedSearchFileNo = remember(searchFileNoInput) { normalizeSearchQuery(searchFileNoInput) }
     val normalizedInterlocatorDate = remember(searchDateInterlocator) { if (searchDateInterlocator.isBlank()) "" else normalizeDate(searchDateInterlocator) }
+
+    fun fetchAndShowCaseDetails(cin: String) {
+        if (cin.isBlank()) {
+            Toast.makeText(context, "No unique CIN available for live lookup.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        isFetchingCaseDetails = true
+        scope.launch(Dispatchers.IO) {
+            try {
+                val url = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+                val payload = "cino=$cin"
+                conn.outputStream.use { os ->
+                    os.write(payload.toByteArray(Charsets.UTF_8))
+                }
+
+                if (conn.responseCode == HttpURLConnection.HTTP_OK) {
+                    val responseHtml = conn.inputStream.bufferedReader().use { it.readText() }
+                    withContext(Dispatchers.Main) {
+                        isFetchingCaseDetails = false
+                        liveCaseDetailsHtml = responseHtml
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        isFetchingCaseDetails = false
+                        Toast.makeText(context, "Failed to fetch details (Server Code: ${conn.responseCode})", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(Dispatchers.Main) {
+                    isFetchingCaseDetails = false
+                    Toast.makeText(context, "Network Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
@@ -791,7 +800,7 @@ fun MainAppScreen(
                                                                 fontSize = 14.sp,
                                                                 color = MaterialTheme.colorScheme.primary,
                                                                 modifier = Modifier.clickable {
-                                                                    fetchAndShowCaseDetails(context, clRecord.caseCin)
+                                                                    fetchAndShowCaseDetails(clRecord.caseCin)
                                                                 }
                                                             )
                                                         }
@@ -1684,6 +1693,43 @@ fun MainAppScreen(
                 }
             }
         }
+    }
+
+    // Loading or Result Dialog for Live Case Details
+    if (isFetchingCaseDetails) {
+        Dialog(onDismissRequest = {}) {
+            Card(modifier = Modifier.padding(16.dp)) {
+                Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                    Text("Fetching live case status from portal...")
+                }
+            }
+        }
+    }
+
+    liveCaseDetailsHtml?.let { html ->
+        AlertDialog(
+            onDismissRequest = { liveCaseDetailsHtml = null },
+            title = { Text("Live Case Details") },
+            text = {
+                Box(modifier = Modifier.height(350.dp).fillMaxWidth()) {
+                    AndroidView(
+                        factory = { ctx ->
+                            WebView(ctx).apply {
+                                settings.javaScriptEnabled = true
+                                loadDataWithBaseURL("https://www.allahabadhighcourt.in", html, "text/html", "UTF-8", null)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = { liveCaseDetailsHtml = null }) {
+                    Text("Close")
+                }
+            }
+        )
     }
 
     if (showBulkReceivedDialog) {
