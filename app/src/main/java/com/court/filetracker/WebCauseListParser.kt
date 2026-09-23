@@ -1,150 +1,92 @@
 package com.court.filetracker
 
 import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
+
+data class CauseListRecord(
+    val id: Long = 0,
+    val causeListDate: String,
+    val courtNo: String,
+    val listType: String,
+    val serialNo: String,
+    val caseType: String,
+    val fileNo: String,
+    val partyName: String,
+    val statusTag: String,
+    val caseCin: String?,
+    val fileSerialNo: String = "",
+    val fileYear: String = "2026"
+)
 
 object WebCauseListParser {
-
-    fun parseHtmlCauseList(
-        htmlContent: String,
-        fallbackCourtNo: String,
-        fallbackDate: String
-    ): List<CauseListRecord> {
+    fun parseHtmlCauseList(html: String, courtNo: String, causeListDate: String): List<CauseListRecord> {
         val records = mutableListOf<CauseListRecord>()
-        val doc: Document = Jsoup.parse(htmlContent)
+        try {
+            val doc = Jsoup.parse(html)
+            val causeListDiv = doc.select("#CauseListDiv").first() ?: doc
+            val rows = causeListDiv.select("tr")
 
-        val causeListContainer = doc.selectFirst("#CauseListDiv") ?: doc
-        val table = causeListContainer.selectFirst("table.table-causelist")
-            ?: causeListContainer.selectFirst("table")
-            ?: return emptyList()
+            var currentListType = "Combined"
 
-        val rows = table.select("tr")
-
-        val containerHeaderText = causeListContainer.select(".card-header, thead, th").text()
-        var currentListType = when {
-            containerHeaderText.contains("Correction Application List", ignoreCase = true) -> "Correction"
-            containerHeaderText.contains("Additional", ignoreCase = true) || containerHeaderText.contains("Unlisted", ignoreCase = true) -> "ACL"
-            else -> "DCL"
-        }
-
-        var lastMainSerial = "0"
-        var withCounter = 1
-
-        val caseRegex = Regex("(?i)([A-Za-z0-9]+)[\\/\\-\\s]*(\\d{1,7})[\\/\\-]+(\\d{4})")
-
-        for (row in rows) {
-            val text = row.text().trim()
-
-            if (row.select("th[colspan], td[colspan]").isNotEmpty()) {
-                if (text.contains("Correction Application List", ignoreCase = true)) {
-                    currentListType = "Correction"
-                } else if (text.contains("Additional", ignoreCase = true) || text.contains("Unlisted", ignoreCase = true)) {
-                    currentListType = "ACL"
-                } else if (text.contains("Combined Cause List", ignoreCase = true) || text.contains("Fresh List", ignoreCase = true) || text.contains("Daily Cause List", ignoreCase = true)) {
-                    currentListType = "DCL"
+            for (row in rows) {
+                val headerText = row.select("th").text()
+                if (headerText.isNotBlank() && !headerText.contains("Sr.No.", ignoreCase = true)) {
+                    currentListType = headerText
                 }
-            }
 
-            if (row.select("p.text-dark").isNotEmpty() || 
-                text.startsWith("TC No", ignoreCase = true) || 
-                text.startsWith("Crime No", ignoreCase = true) ||
-                text.startsWith("Details of Cases", ignoreCase = true)
-            ) {
-                continue
-            }
+                val cols = row.select("td")
+                if (cols.size >= 5) {
+                    val rawSerialCell = cols[0].html()
+                    val cleanSerialText = rawSerialCell.replace(Regex("<[^>]*>"), "").trim()
+                    val serialNo = Regex("^\\d+").find(cleanSerialText)?.value ?: cleanSerialText
 
-            val cells = row.select("td")
-            if (cells.isEmpty()) continue
+                    if (serialNo.isBlank() || serialNo.toIntOrNull() == null) continue
 
-            // Extract unique CIN from onclick attribute (e.g., viewCaseData('1669840'))[cite: 1]
-            val onclickAttr = row.select("[onclick]").attr("onclick")
-            val extractedCin = if (onclickAttr.contains("viewCaseData")) {
-                Regex("'([^']+)'").find(onclickAttr)?.groupValues?.get(1) ?: ""
-            } else {
-                ""
-            }
+                    val statusTag = cols[1].text().trim()
+                    val caseDetailCol = cols[2]
+                    
+                    val caseLink = caseDetailCol.select("a.btn-link, a").first()
+                    val fileNo = caseLink?.text()?.trim() ?: ""
 
-            val isWithRow = cells.any { it.text().trim().equals("with", ignoreCase = true) }
-            if (isWithRow) {
-                val caseCellText = cells.getOrNull(1)?.text()?.trim() ?: ""
-                val rawParty = cells.getOrNull(2)?.text()?.trim() ?: ""
-                val cleanParty = cleanPartyText(rawParty)
+                    var cin: String? = null
+                    val onClickAttr = caseLink?.attr("onclick") ?: ""
+                    val cinMatch = Regex("viewCaseData\\('([^']+)'\\)").find(onClickAttr)
+                    if (cinMatch != null) {
+                        cin = cinMatch.groupValues[1]
+                    }
 
-                val match = caseRegex.find(caseCellText)
-                if (match != null) {
-                    val cType = match.groupValues[1].uppercase()
-                    val fSerial = match.groupValues[2]
-                    val fYear = match.groupValues[3]
-                    val subSerial = "$lastMainSerial.$withCounter"
-                    withCounter++
+                    val partyName = cols[3].text().trim()
 
-                    records.add(
-                        CauseListRecord(
-                            causeListDate = fallbackDate,
-                            courtNo = fallbackCourtNo,
-                            serialNo = subSerial,
-                            statusTag = "With",
-                            listType = currentListType,
-                            caseType = cType,
-                            fileSerialNo = fSerial,
-                            fileYear = fYear,
-                            fileNo = "$fSerial/$fYear",
-                            partyName = cleanParty,
-                            caseCin = extractedCin
+                    var fileSerial = ""
+                    var fileYear = "2026"
+                    if (fileNo.contains("/")) {
+                        val parts = fileNo.split("/")
+                        fileSerial = parts[0].replace(Regex("[^\\d]"), "")
+                        fileYear = parts.getOrNull(1)?.replace(Regex("[^\\d]"), "") ?: "2026"
+                    }
+
+                    if (fileNo.isNotBlank()) {
+                        records.add(
+                            CauseListRecord(
+                                causeListDate = causeListDate,
+                                courtNo = courtNo,
+                                listType = currentListType,
+                                serialNo = serialNo,
+                                caseType = "Criminal",
+                                fileNo = fileNo,
+                                partyName = partyName,
+                                statusTag = statusTag,
+                                caseCin = cin,
+                                fileSerialNo = fileSerial,
+                                fileYear = fileYear
+                            )
                         )
-                    )
-                }
-                continue
-            }
-
-            val firstCellText = cells[0].text().trim()
-            val candidateSerial = firstCellText.toIntOrNull()
-
-            if (candidateSerial != null) {
-                lastMainSerial = candidateSerial.toString()
-                withCounter = 1
-
-                val statusTag = if (cells.size >= 5) cells[1].text().trim() else ""
-                val caseDetailCell = if (cells.size >= 5) cells[2] else cells[1]
-                val partyCell = if (cells.size >= 5) cells[3] else cells[2]
-
-                val caseDetailText = caseDetailCell.text().trim()
-                val cleanParty = cleanPartyText(partyCell.text().trim())
-
-                val isCorrectionList = currentListType == "Correction"
-                val match = caseRegex.find(caseDetailText)
-
-                if (match != null) {
-                    val cType = match.groupValues[1].uppercase()
-                    val fSerial = match.groupValues[2]
-                    val fYear = match.groupValues[3]
-
-                    records.add(
-                        CauseListRecord(
-                            causeListDate = fallbackDate,
-                            courtNo = fallbackCourtNo,
-                            serialNo = lastMainSerial,
-                            statusTag = statusTag.ifEmpty { if (isCorrectionList) "Correction" else "" },
-                            listType = currentListType,
-                            caseType = cType,
-                            fileSerialNo = fSerial,
-                            fileYear = fYear,
-                            fileNo = "$fSerial/$fYear",
-                            partyName = cleanParty,
-                            caseCin = extractedCin
-                        )
-                    )
+                    }
                 }
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-
         return records
-    }
-
-    private fun cleanPartyText(rawParty: String): String {
-        return rawParty
-            .replace(Regex("(?i)\\s+vs\\s+"), " VS ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
     }
 }
