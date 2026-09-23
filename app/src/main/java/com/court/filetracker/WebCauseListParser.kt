@@ -97,7 +97,7 @@ object WebCauseListParser {
                 continue
             }
 
-            // Robust E-File & Serial Extraction: Strip tags and extract leading digits (e.g. "5" from "5<br>E-File")
+            // Clean HTML tags to accurately extract E-Files (like rows 5, 73, 75) and standard rows
             val rawSerialHtml = cells[0].html()
             val cleanSerialText = rawSerialHtml.replace(Regex("<[^>]*>"), "").trim()
             val digitMatch = Regex("^\\d+").find(cleanSerialText)
@@ -116,11 +116,14 @@ object WebCauseListParser {
 
                 val isCorrectionList = currentListType.equals("Correction", true)
                 
-                // Parse Application Cases from Srl 238 onwards (e.g. Listing Application / Stay Vacation)
+                // Parse Application Cases from Srl 238 onwards: isolate text after "in case" to get the correct main file reference
+                val inCaseIndex = caseDetailText.indexOf("in case", ignoreCase = true)
+                val targetTextForCase = if (inCaseIndex != -1) caseDetailText.substring(inCaseIndex) else caseDetailText
+
                 val appTypeMatch = Regex("\\(([^)]+)\\)").find(caseDetailText)
                 val appNoMatch = Regex("(\\d+/[\\d]{4})").find(caseDetailText)
 
-                val match = caseRegex.find(caseDetailText)
+                val match = caseRegex.find(targetTextForCase) ?: caseRegex.find(caseDetailText)
 
                 if (match != null) {
                     val cType = match.groupValues[1].uppercase()
