@@ -173,6 +173,7 @@ fun MainAppScreen(
 
     var addClCourtInput by remember { mutableStateOf("") }
     var addClDateInput by remember { mutableStateOf(currentDate) }
+    var isClWebActive by remember { mutableStateOf(false) }
     var dispatchClDateInput by remember { mutableStateOf(currentDate) }
     var selectedClCourtChip by remember { mutableStateOf<String?>(null) }
     var clSearchQuery by remember { mutableStateOf("") }
@@ -368,6 +369,7 @@ fun MainAppScreen(
                         selected = currentView == "ADD_CAUSE_LIST",
                         onClick = { 
                             currentView = "ADD_CAUSE_LIST"
+                            isClWebActive = false
                             scope.launch { drawerState.close() } 
                         },
                         icon = { Icon(Icons.Default.AddCircle, contentDescription = null) }
@@ -509,15 +511,161 @@ fun MainAppScreen(
                     }
 
                     "ADD_CAUSE_LIST" -> {
-                        CauseListIngestionView(
-                            courtNo = addClCourtInput,
-                            onCourtNoChange = { addClCourtInput = it },
-                            date = addClDateInput,
-                            onDateChange = { addClDateInput = it },
-                            causeListDao = causeListDao,
-                            context = context,
-                            scope = scope
-                        )
+                        if (!isClWebActive) {
+                            Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text("Add Cause List to Tracker", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    OutlinedTextField(
+                                        value = addClCourtInput,
+                                        onValueChange = { addClCourtInput = it },
+                                        label = { Text("Court Number *") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    OutlinedTextField(
+                                        value = addClDateInput,
+                                        onValueChange = { addClDateInput = it },
+                                        label = { Text("Cause List Date (dd-MM-yy) *") },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    
+                                    // Automated Multi-Step Ingestion Button
+                                    Button(
+                                        enabled = addClCourtInput.isNotBlank() && addClDateInput.isNotBlank(),
+                                        onClick = {
+                                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                                try {
+                                                    val cleanCourtNo = addClCourtInput.trim()
+                                                    val rawInput = addClDateInput.trim()
+
+                                                    // Normalize date for API (dd-MM-yyyy) vs Cache (dd-MM-yy)
+                                                    val apiDateStr: String
+                                                    val localDateStr: String
+
+                                                    if (rawInput.length == 8) {
+                                                        localDateStr = rawInput
+                                                        val parts = rawInput.split("-")
+                                                        apiDateStr = if (parts.size == 3) {
+                                                            val yy = parts[2]
+                                                            val fullYear = if (yy.length == 2) "20$yy" else yy
+                                                            "${parts[0]}-${parts[1]}-$fullYear"
+                                                        } else rawInput
+                                                    } else if (rawInput.length == 10) {
+                                                        apiDateStr = rawInput
+                                                        val parts = rawInput.split("-")
+                                                        localDateStr = if (parts.size == 3) {
+                                                            val yyyy = parts[2]
+                                                            val shortYear = if (yyyy.length == 4) yyyy.takeLast(2) else yyyy
+                                                            "${parts[0]}-${parts[1]}-$shortYear"
+                                                        } else rawInput
+                                                    } else {
+                                                        apiDateStr = rawInput
+                                                        localDateStr = rawInput
+                                                    }
+
+                                                    causeListDao.deleteForDateAndCourt(localDateStr, cleanCourtNo)
+
+                                                    val typeUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist_website/get_CauselistType")
+                                                    val typeConn = typeUrl.openConnection() as HttpURLConnection
+                                                    typeConn.requestMethod = "POST"
+                                                    typeConn.doOutput = true
+                                                    typeConn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+                                                    val encodedCourt = URLEncoder.encode("Court No-$cleanCourtNo", "UTF-8")
+                                                    val typePayload = "case_date=$apiDateStr&court_no=$encodedCourt&captchacode="
+                                                    typeConn.outputStream.use { os ->
+                                                        os.write(typePayload.toByteArray(Charsets.UTF_8))
+                                                    }
+
+                                                    val typeHtml = if (typeConn.responseCode == HttpURLConnection.HTTP_OK) {
+                                                        typeConn.inputStream.bufferedReader().use { it.readText() }
+                                                    } else ""
+
+                                                    val listTypesMap = mutableMapOf<String, String>()
+                                                    val rowRegex = Regex("<tr>\\s*<td>\\s*<strong>(.*?)</strong>\\s*</td>\\s*<td>.*?viewCauselist\\([^)]*?'(\\d+)'\\s*\\).*?</td>\\s*</tr>", RegexOption.DOT_MATCHES_ALL)
+                                                    for (rm in rowRegex.findAll(typeHtml)) {
+                                                        listTypesMap[rm.groupValues[2].trim()] = rm.groupValues[1].trim()
+                                                    }
+
+                                                    if (listTypesMap.isEmpty()) {
+                                                        val fallbackRegex = Regex("viewCauselist\\(\\s*'[^']+'\\s*,\\s*'[^']+'\\s*,\\s*'([^']+)'\\s*\\)")
+                                                        for (m in fallbackRegex.findAll(typeHtml)) {
+                                                            listTypesMap[m.groupValues[1]] = "Cause List Type ${m.groupValues[1]}"
+                                                        }
+                                                    }
+
+                                                    val fetchBreakdown = mutableListOf<String>()
+                                                    var totalFetched = 0
+
+                                                    for ((listTypeCode, listTypeName) in listTypesMap) {
+                                                        val clUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_causelist")
+                                                        val clConn = clUrl.openConnection() as HttpURLConnection
+                                                        clConn.requestMethod = "POST"
+                                                        clConn.doOutput = true
+                                                        clConn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+                                                        val clPayload = "case_date=$apiDateStr&court_no=$cleanCourtNo&list_type=$listTypeCode"
+                                                        clConn.outputStream.use { os ->
+                                                            os.write(clPayload.toByteArray(Charsets.UTF_8))
+                                                        }
+
+                                                        val clHtml = if (clConn.responseCode == HttpURLConnection.HTTP_OK) {
+                                                            clConn.inputStream.bufferedReader().use { it.readText() }
+                                                        } else ""
+
+                                                        val parsedRecords = WebCauseListParser.parseHtmlCauseList(clHtml, cleanCourtNo, localDateStr)
+                                                        if (parsedRecords.isNotEmpty()) {
+                                                            val taggedRecords = parsedRecords.map { it.copy(listType = listTypeName, causeListDate = localDateStr) }
+                                                            causeListDao.insertAll(taggedRecords)
+                                                            fetchBreakdown.add("$listTypeName: ${taggedRecords.size} cases")
+                                                            totalFetched += taggedRecords.size
+                                                        }
+                                                    }
+
+                                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                        if (totalFetched >  0) {
+                                                            Toast.makeText(context, "Successfully fetched $totalFetched cases!", Toast.LENGTH_LONG).show()
+                                                        } else {
+                                                            Toast.makeText(context, "No cases found. Opening Web Portal fallback...", Toast.LENGTH_SHORT).show()
+                                                            isClWebActive = true
+                                                        }
+                                                    }
+                                                } catch (e: Exception) {
+                                                    e.printStackTrace()
+                                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                        isClWebActive = true
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("FETCH CAUSE LIST FROM WEB")
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    OutlinedButton(
+                                        onClick = { isClWebActive = true },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("OPEN MANUAL WEB BROWSER PORTAL")
+                                    }
+                                }
+                            }
+                        } else {
+                            CauseListIngestionWebView(
+                                courtNo = addClCourtInput.trim(),
+                                date = addClDateInput.trim(),
+                                causeListDao = causeListDao,
+                                onClose = { 
+                                    isDrawerLocked = false
+                                    isClWebActive = false 
+                                },
+                                onDisableDrawerGestures = { locked -> isDrawerLocked = locked }
+                            )
+                        }
                     }
 
                     "DISPATCH_CAUSE_LIST" -> {
@@ -2764,6 +2912,276 @@ fun CauseListIngestionView(
             confirmButton = {
                 Button(onClick = { summaryMessage = null }) {
                     Text("OK")
+                }
+            }
+        )
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun CauseListIngestionWebView(
+    courtNo: String,
+    date: String,
+    causeListDao: CauseListDao,
+    onClose: () -> Unit,
+    onDisableDrawerGestures: (Boolean) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var webView: WebView? by remember { mutableStateOf(null) }
+    var detectedHtmlToImport by remember { mutableStateOf<String?>(null) }
+    var isImporting by remember { mutableStateOf(false) }
+
+    var lastHandledSignature by remember { mutableStateOf<String?>(null) }
+    var hasPromptBeenShownForCurrentView by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        onDisableDrawerGestures(true)
+        onDispose {
+            onDisableDrawerGestures(false)
+        }
+    }
+
+    BackHandler {
+        if (webView?.canGoBack() == true) {
+            webView?.goBack()
+        } else {
+            onDisableDrawerGestures(false)
+            onClose()
+        }
+    }
+
+    class WebAppInterface {
+        @JavascriptInterface
+        fun onCauseListRendered(tableSignature: String, html: String) {
+            scope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                if (!isImporting && 
+                    !hasPromptBeenShownForCurrentView && 
+                    tableSignature != lastHandledSignature && 
+                    detectedHtmlToImport == null
+                ) {
+                    lastHandledSignature = tableSignature
+                    hasPromptBeenShownForCurrentView = true
+                    detectedHtmlToImport = html
+                }
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Surface(
+            tonalElevation = 2.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Court: $courtNo | Date: $date", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text("CCMS Portal Ingestion", fontSize = 11.sp, color = MaterialTheme.colorScheme.secondary)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(
+                        onClick = {
+                            isImporting = true
+                            webView?.evaluateJavascript(
+                                "(function() { return document.documentElement.outerHTML; })();"
+                            ) { rawHtmlJson ->
+                                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    try {
+                                        val unescaped = org.json.JSONTokener(rawHtmlJson).nextValue().toString()
+                                        val parsed = WebCauseListParser.parseHtmlCauseList(unescaped, courtNo, date)
+                                        if (parsed.isNotEmpty()) {
+                                            causeListDao.insertAll(parsed)
+                                            val detectedType = parsed.firstOrNull()?.listType ?: "DCL"
+                                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                isImporting = false
+                                                Toast.makeText(context, "Successfully Imported ${parsed.size} Cases (${detectedType})!", Toast.LENGTH_LONG).show()
+                                            }
+                                        } else {
+                                            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                                isImporting = false
+                                                Toast.makeText(context, "No active cause list table found on screen.", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                            isImporting = false
+                                            Toast.makeText(context, "Parse Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text("Import Visible", fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            onDisableDrawerGestures(false)
+                            onClose()
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text("Exit", fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+
+        if (isImporting) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+
+        Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+
+                        isVerticalScrollBarEnabled = true
+                        isHorizontalScrollBarEnabled = true
+                        isScrollbarFadingEnabled = false
+                        scrollBarStyle = WebView.SCROLLBARS_INSIDE_OVERLAY
+                        overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
+
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            databaseEnabled = true
+                            
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
+                            setSupportZoom(true)
+                            builtInZoomControls = true
+                            displayZoomControls = false
+                            
+                            javaScriptCanOpenWindowsAutomatically = true
+                            setSupportMultipleWindows(false)
+                            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            
+                            userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                        }
+
+                        addJavascriptInterface(WebAppInterface(), "AndroidBridge")
+
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                hasPromptBeenShownForCurrentView = false
+                            }
+
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                super.onPageFinished(view, url)
+                                view?.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        try {
+                                            var meta = document.querySelector('meta[name="viewport"]');
+                                            if (!meta) {
+                                                meta = document.createElement('meta');
+                                                meta.name = 'viewport';
+                                                document.head.appendChild(meta);
+                                            }
+                                            meta.content = 'width=1280, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes';
+
+                                            var lastSignature = '';
+                                            function checkTable() {
+                                                var div = document.getElementById('CauseListDiv');
+                                                if (div && div.style.display !== 'none') {
+                                                    var table = div.querySelector('table.table-causelist');
+                                                    if (table && table.rows.length > 2) {
+                                                        var currentSignature = table.rows.length + '_' + table.rows[1].innerText;
+                                                        if (currentSignature !== lastSignature) {
+                                                            lastSignature = currentSignature;
+                                                            AndroidBridge.onCauseListRendered(currentSignature, document.documentElement.outerHTML);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            var target = document.getElementById('CauseListDiv');
+                                            if (target) {
+                                                var observer = new MutationObserver(function(mutations) {
+                                                    checkTable();
+                                                });
+                                                observer.observe(target, { attributes: true, childList: true, subtree: true });
+                                            }
+                                            setInterval(checkTable, 2500);
+                                        } catch (e) {}
+                                    })();
+                                    """.trimIndent(), null
+                                )
+                            }
+
+                            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
+                                handler?.proceed()
+                            }
+                        }
+
+                        loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
+                        webView = this
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().fillMaxHeight()
+            )
+        }
+    }
+
+    detectedHtmlToImport?.let { html ->
+        AlertDialog(
+            onDismissRequest = { 
+                detectedHtmlToImport = null 
+            },
+            title = { Text("Cause List Detected!") },
+            text = { Text("A cause list is open on screen. Do you wish to import its cases and companion files for Court $courtNo ($date)?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val contentToParse = html
+                        detectedHtmlToImport = null
+                        isImporting = true
+                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            try {
+                                val parsedRecords = WebCauseListParser.parseHtmlCauseList(contentToParse, courtNo, date)
+                                if (parsedRecords.isNotEmpty()) {
+                                    causeListDao.insertAll(parsedRecords)
+                                    val detectedType = parsedRecords.firstOrNull()?.listType ?: "DCL"
+                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        isImporting = false
+                                        Toast.makeText(context, "Successfully Imported ${parsedRecords.size} Cases (${detectedType})!", Toast.LENGTH_LONG).show()
+                                    }
+                                } else {
+                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                        isImporting = false
+                                        Toast.makeText(context, "No rows could be extracted from this view.", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    isImporting = false
+                                    Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text("Import Now")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { 
+                    detectedHtmlToImport = null 
+                }) {
+                    Text("Dismiss")
                 }
             }
         )
