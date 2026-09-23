@@ -132,58 +132,58 @@ fun MainAppScreen(
     val context = LocalContext.current
     val currentDate = remember { SimpleDateFormat("dd-MM-yy", Locale.getDefault()).format(Date()) }
 
-    var currentView by remember { mutableStateOf("MAIN") }
-    var isDrawerLocked by remember { mutableStateOf(false) }
+    var currentView by remember { mutableState("MAIN") }
+    var isDrawerLocked by remember { mutableState(false) }
 
-    var selectedMode by remember { mutableStateOf("Dispatched") }
-    var dispatchDateInput by remember { mutableStateOf(currentDate) }
-    var courtNoInput by remember { mutableStateOf("") }
-    var listTypeInput by remember { mutableStateOf("DCL") }
-    var serialNoInput by remember { mutableStateOf("") }
-    var fileSerialInput by remember { mutableStateOf("") }
-    var fileYearInput by remember { mutableStateOf("2026") }
-    var remarksInput by remember { mutableStateOf("") }
-    var judgeNameInput by remember { mutableStateOf("") }
+    var selectedMode by remember { mutableState("Dispatched") }
+    var dispatchDateInput by remember { mutableState(currentDate) }
+    var courtNoInput by remember { mutableState("") }
+    var listTypeInput by remember { mutableState("DCL") }
+    var serialNoInput by remember { mutableState("") }
+    var fileSerialInput by remember { mutableState("") }
+    var fileYearInput by remember { mutableState("2026") }
+    var remarksInput by remember { mutableState("") }
+    var judgeNameInput by remember { mutableState("") }
 
-    var activeSearchOption by remember { mutableStateOf("NONE") }
-    var searchDateInput by remember { mutableStateOf(currentDate) }
-    var searchSelectedCourt by remember { mutableStateOf<String?>(null) }
-    var searchFileNoInput by remember { mutableStateOf("") }
-    var searchCategory by remember { mutableStateOf("LOCATION") }
-    var searchLocOption by remember { mutableStateOf("Listing Seat") }
-    var searchCustomLocText by remember { mutableStateOf("") }
-    var searchJudgeTextInput by remember { mutableStateOf("") }
-    var searchRemarksTextInput by remember { mutableStateOf("") }
-    var searchStatusOption by remember { mutableStateOf("Dispatched") }
-    var searchDateInterlocator by remember { mutableStateOf("") }
+    var activeSearchOption by remember { mutableState("NONE") }
+    var searchDateInput by remember { mutableState(currentDate) }
+    var searchSelectedCourt by remember { mutableState<String?>(null) }
+    var searchFileNoInput by remember { mutableState("") }
+    var searchCategory by remember { mutableState("LOCATION") }
+    var searchLocOption by remember { mutableState("Listing Seat") }
+    var searchCustomLocText by remember { mutableState("") }
+    var searchJudgeTextInput by remember { mutableState("") }
+    var searchRemarksTextInput by remember { mutableState("") }
+    var searchStatusOption by remember { mutableState("Dispatched") }
+    var searchDateInterlocator by remember { mutableState("") }
 
-    var bulkDateInput by remember { mutableStateOf(currentDate) }
-    var bulkSelectedCourtChip by remember { mutableStateOf<String?>(null) }
-    var bulkTargetStatus by remember { mutableStateOf("Taken Up") }
-    var selectedFileIds by remember { mutableStateOf(setOf<Long>()) }
-    var showBulkReceivedDialog by remember { mutableStateOf(false) }
+    var bulkDateInput by remember { mutableState(currentDate) }
+    var bulkSelectedCourtChip by remember { mutableState<String?>(null) }
+    var bulkTargetStatus by remember { mutableState("Taken Up") }
+    var selectedFileIds by remember { mutableState(setOf<Long>()) }
+    var showBulkReceivedDialog by remember { mutableState(false) }
 
-    var bulkLocationCategory by remember { mutableStateOf("PASS_OVER") }
-    var bulkLocSelectedIds by remember { mutableStateOf(setOf<Long>()) }
-    var showSetLocationDialog by remember { mutableStateOf(false) }
+    var bulkLocationCategory by remember { mutableState("PASS_OVER") }
+    var bulkLocSelectedIds by remember { mutableState(setOf<Long>()) }
+    var showSetLocationDialog by remember { mutableState(false) }
 
-    var reportTargetFileNo by remember { mutableStateOf("") }
-    var reportTargetDate by remember { mutableStateOf(currentDate) }
-    var reportSelectedCourtChip by remember { mutableStateOf<String?>(null) }
+    var reportTargetFileNo by remember { mutableState("") }
+    var reportTargetDate by remember { mutableState(currentDate) }
+    var reportSelectedCourtChip by remember { mutableState<String?>(null) }
 
-    var addClCourtInput by remember { mutableStateOf("") }
-    var addClDateInput by remember { mutableStateOf(currentDate) }
-    var isClWebActive by remember { mutableStateOf(false) }
-    var dispatchClDateInput by remember { mutableStateOf(currentDate) }
-    var selectedClCourtChip by remember { mutableStateOf<String?>(null) }
-    var clSearchQuery by remember { mutableStateOf("") }
+    var addClCourtInput by remember { mutableState("") }
+    var addClDateInput by remember { mutableState(currentDate) }
+    var isClWebActive by remember { mutableState(false) }
+    var dispatchClDateInput by remember { mutableState(currentDate) }
+    var selectedClCourtChip by remember { mutableState<String?>(null) }
+    var clSearchQuery by remember { mutableState("") }
 
-    var activePortalCin by remember { mutableStateOf<String?>(null) }
+    var activePortalCin by remember { mutableState<String?>(null) }
 
-    var activeTraceRecord by remember { mutableStateOf<FileRecord?>(null) }
-    var activeUpdateRecord by remember { mutableStateOf<FileRecord?>(null) }
-    var targetFileForMetaData by remember { mutableStateOf<FileRecord?>(null) }
-    var showFlushDialog by remember { mutableStateOf(false) }
+    var activeTraceRecord by remember { mutableState<FileRecord?>(null) }
+    var activeUpdateRecord by remember { mutableState<FileRecord?>(null) }
+    var targetFileForMetaData by remember { mutableState<FileRecord?>(null) }
+    var showFlushDialog by remember { mutableState(false) }
 
     val normalizedSearchDate = remember(searchDateInput) { normalizeDate(searchDateInput) }
     val normalizedBulkDate = remember(bulkDateInput) { normalizeDate(bulkDateInput) }
@@ -586,13 +586,16 @@ fun MainAppScreen(
 
                                     if (!matchesTextQuery) return@filter false
 
+                                    // Requirement: Ensure Correction Application List cases are ALWAYS displayed
+                                    val isCorrection = clRecord.listType.contains("Correction", ignoreCase = true)
+                                    if (isCorrection) return@filter true
+
                                     if (targetSerials.isEmpty()) {
                                         true
                                     } else {
-                                        val isCorrection = clRecord.listType.equals("Correction", ignoreCase = true)
                                         val cleanRecordSerial = stripLeadingZeros(clRecord.serialNo)
 
-                                        isCorrection || targetSerials.any { enteredSr ->
+                                        targetSerials.any { enteredSr ->
                                             val cleanEntered = stripLeadingZeros(enteredSr)
                                             cleanRecordSerial == cleanEntered || 
                                             cleanRecordSerial.startsWith("$cleanEntered.") || 
@@ -2106,9 +2109,6 @@ fun CauseListIngestionView(
                                 val cleanCourtNo = courtNo.trim()
                                 val rawDateInput = date.trim()
 
-                                // Normalize/Convert date formats:
-                                // Backend requires 4-digit year (dd-MM-yyyy)
-                                // Local DB / App architecture requires 2-digit year (dd-MM-yy)
                                 val apiDateFormat = SimpleDateFormat("dd-MM-yyyy", Locale.getDefault())
                                 val localDateFormat = SimpleDateFormat("dd-MM-yy", Locale.getDefault())
                                 
@@ -2125,10 +2125,8 @@ fun CauseListIngestionView(
                                 val apiDateStr = if (parsedDate != null) apiDateFormat.format(parsedDate) else rawDateInput
                                 val localDateStr = if (parsedDate != null) localDateFormat.format(parsedDate) else rawDateInput
 
-                                // 1. Flush existing records for this specific local date and court number
                                 causeListDao.deleteForDateAndCourt(localDateStr, cleanCourtNo)
 
-                                // 2. Hit get_CauselistType endpoint using 4-digit year format
                                 val typeUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist_website/get_CauselistType")
                                 val typeConn = typeUrl.openConnection() as HttpURLConnection
                                 typeConn.requestMethod = "POST"
@@ -2145,8 +2143,7 @@ fun CauseListIngestionView(
                                     typeConn.inputStream.bufferedReader().use { it.readText() }
                                 } else ""
 
-                                // 3. Parse list types and list_type codes
-                                val listTypesMap = mutableMapOf<String, String>() // code -> name
+                                val listTypesMap = mutableMapOf<String, String>()
                                 val rowRegex = Regex("<tr>\\s*<td>\\s*<strong>(.*?)</strong>\\s*</td>\\s*<td>.*?viewCauselist\\([^)]*?'(\\d+)'\\s*\\).*?</td>\\s*</tr>", RegexOption.DOT_MATCHES_ALL)
                                 val rowMatches = rowRegex.findAll(typeHtml)
                                 for (rm in rowMatches) {
@@ -2166,7 +2163,6 @@ fun CauseListIngestionView(
                                 val fetchBreakdown = mutableListOf<String>()
                                 var totalFetched = 0
 
-                                // 4. Iterate over each discovered list type code and fetch cases using apiDateStr
                                 for ((listTypeCode, listTypeName) in listTypesMap) {
                                     val clUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_causelist")
                                     val clConn = clUrl.openConnection() as HttpURLConnection
@@ -2183,7 +2179,6 @@ fun CauseListIngestionView(
                                         clConn.inputStream.bufferedReader().use { it.readText() }
                                     } else ""
 
-                                    // Parse html cause list rows and save using localDateStr (dd-MM-yy) for architectural consistency
                                     val parsedRecords = WebCauseListParser.parseHtmlCauseList(clHtml, cleanCourtNo, localDateStr)
                                     if (parsedRecords.isNotEmpty()) {
                                         val taggedRecords = parsedRecords.map { it.copy(listType = listTypeName, causeListDate = localDateStr) }
