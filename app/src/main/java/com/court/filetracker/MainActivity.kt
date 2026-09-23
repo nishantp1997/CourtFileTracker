@@ -2014,6 +2014,591 @@ fun MainAppScreen(
 }
 
 @Composable
+fun CaseCardWithMeta(
+    record: FileRecord,
+    onClick: () -> Unit,
+    onUpdate: () -> Unit,
+    onAddMeta: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
+                    Text(record.status, color = Color.White)
+                }
+            }
+            Text("Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
+            if (record.storageLocation.isNotBlank()) Text("📍 Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
+            if (record.remarks.isNotBlank()) Text("📝 Remarks: ${record.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
+            if (record.reportsOnRecord.isNotBlank()) Text("📑 Reports: ${record.reportsOnRecord.replace("\n", ", ")}", fontSize = 11.sp, color = Color(0xFF1565C0))
+            if (record.applicationsOnRecord.isNotBlank()) Text("📋 Apps: ${record.applicationsOnRecord}", fontSize = 11.sp, color = Color(0xFF6A1B9A))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
+                OutlinedButton(onClick = onAddMeta, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                    Text("Meta-Data", fontSize = 11.sp)
+                }
+                Button(onClick = onUpdate, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                    Text("Update Status", fontSize = 11.sp)
+                }
+            }
+        }
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun CauseListStatusWebViewContent(
+    onNavigateBack: () -> Unit,
+    onDisableDrawerGestures: (Boolean) -> Unit
+) {
+    var webView: WebView? by remember { mutableStateOf(null) }
+    var isLoading by remember { mutableStateOf(false) }
+
+    var isSearchActive by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var activeMatchIndex by remember { mutableStateOf(0) }
+    var totalMatches by remember { mutableStateOf(0) }
+
+    val context = LocalContext.current
+
+    DisposableEffect(Unit) {
+        onDisableDrawerGestures(true)
+        onDispose {
+            onDisableDrawerGestures(false)
+        }
+    }
+
+    BackHandler {
+        if (isSearchActive) {
+            isSearchActive = false
+            webView?.clearMatches()
+        } else if (webView?.canGoBack() == true) {
+            webView?.goBack()
+        } else {
+            onDisableDrawerGestures(false)
+            onNavigateBack()
+        }
+    }
+
+    fun openInExternalBrowser(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                setPackage("com.android.chrome")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (ex: Exception) {
+                Toast.makeText(context, "No web browser found to open link", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(
+                        onClick = { 
+                            if (webView?.canGoBack() == true) webView?.goBack() 
+                            else {
+                                onDisableDrawerGestures(false)
+                                onNavigateBack()
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Back", fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { webView?.reload() },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Reload", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Reload", fontSize = 12.sp)
+                    }
+                    IconButton(onClick = {
+                        isSearchActive = !isSearchActive
+                        if (!isSearchActive) {
+                            webView?.clearMatches()
+                            searchQuery = ""
+                            totalMatches = 0
+                            activeMatchIndex = 0
+                        }
+                    }) {
+                        Icon(Icons.Default.Search, contentDescription = "Find")
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        onDisableDrawerGestures(false)
+                        onNavigateBack()
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text("Exit Portal", fontSize = 12.sp)
+                }
+            }
+        }
+
+        if (isSearchActive) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                elevation = CardDefaults.cardElevation(4.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { query ->
+                            searchQuery = query
+                            if (query.isNotBlank()) webView?.findAllAsync(query)
+                            else {
+                                webView?.clearMatches()
+                                totalMatches = 0
+                                activeMatchIndex = 0
+                            }
+                        },
+                        label = { Text("Find in page...", fontSize = 12.sp) },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+
+                    if (totalMatches > 0) {
+                        Text(text = "${activeMatchIndex + 1}/$totalMatches", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    IconButton(enabled = totalMatches > 0, onClick = { webView?.findNext(false) }) {
+                        Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Previous")
+                    }
+                    IconButton(enabled = totalMatches > 0, onClick = { webView?.findNext(true) }) {
+                        Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Next")
+                    }
+                    IconButton(onClick = {
+                        isSearchActive = false
+                        webView?.clearMatches()
+                        searchQuery = ""
+                        totalMatches = 0
+                        activeMatchIndex = 0
+                    }) {
+                        Icon(Icons.Default.Close, contentDescription = "Close")
+                    }
+                }
+            }
+        }
+
+        if (isLoading) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+
+        Box(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+
+                        isVerticalScrollBarEnabled = true
+                        isHorizontalScrollBarEnabled = true
+                        isScrollbarFadingEnabled = false
+                        scrollBarStyle = WebView.SCROLLBARS_INSIDE_OVERLAY
+                        overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
+
+                        val cookieManager = CookieManager.getInstance()
+                        cookieManager.setAcceptCookie(true)
+                        cookieManager.setAcceptThirdPartyCookies(this, true)
+
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            databaseEnabled = true
+                            
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
+                            setSupportZoom(true)
+                            builtInZoomControls = true
+                            displayZoomControls = false
+                            
+                            javaScriptCanOpenWindowsAutomatically = true
+                            setSupportMultipleWindows(true)
+                            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            
+                            userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                        }
+
+                        setFindListener { activeIndex, matchCount, _ ->
+                            activeMatchIndex = activeIndex
+                            totalMatches = matchCount
+                        }
+
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
+                                val hitTestResult = view?.hitTestResult
+                                hitTestResult?.extra?.let { url ->
+                                    openInExternalBrowser(url)
+                                }
+                                return false
+                            }
+
+                            override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                Toast.makeText(ctx, message ?: "Alert", Toast.LENGTH_SHORT).show()
+                                result?.confirm()
+                                return true
+                            }
+
+                            override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                result?.confirm()
+                                return true
+                            }
+                        }
+
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                                isLoading = true
+                            }
+
+                            override fun onPageFinished(view: WebView?, url: String?) {
+                                isLoading = false
+                                view?.evaluateJavascript(
+                                    """
+                                    (function() {
+                                        try {
+                                            var meta = document.querySelector('meta[name="viewport"]');
+                                            if (!meta) {
+                                                meta = document.createElement('meta');
+                                                meta.name = 'viewport';
+                                                document.head.appendChild(meta);
+                                            }
+                                            meta.content = 'width=1280, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes';
+                                        } catch (e) {}
+                                    })();
+                                    """.trimIndent(), null
+                                )
+                            }
+
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                val url = request?.url.toString()
+                                if (url.contains("order", ignoreCase = true) || url.contains("judgment", ignoreCase = true) || url.contains("popup", ignoreCase = true)) {
+                                    openInExternalBrowser(url)
+                                    return true
+                                }
+                                view?.loadUrl(url)
+                                return true
+                            }
+
+                            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
+                                handler?.proceed()
+                            }
+                        }
+
+                        loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
+                        webView = this
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().fillMaxHeight()
+            )
+        }
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun LiveCaseStatusPortalView(
+    cin: String,
+    onNavigateBack: () -> Unit,
+    onDisableDrawerGestures: (Boolean) -> Unit
+) {
+    var webView: WebView? by remember { mutableStateOf(null) }
+    var isLoading by remember { mutableStateOf(true) }
+    var caseDetailsHtml by remember { mutableStateOf<String?>(null) }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    DisposableEffect(Unit) {
+        onDisableDrawerGestures(true)
+        onDispose {
+            onDisableDrawerGestures(false)
+        }
+    }
+
+    BackHandler {
+        if (webView?.canGoBack() == true) {
+            webView?.goBack()
+        } else {
+            onDisableDrawerGestures(false)
+            onNavigateBack()
+        }
+    }
+
+    fun loadCaseDetails() {
+        isLoading = true
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val url = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+                val payload = "cino=$cin"
+                conn.outputStream.use { os ->
+                    os.write(payload.toByteArray(Charsets.UTF_8))
+                }
+
+                if (conn.responseCode == HttpURLConnection.HTTP_OK) {
+                    val rawHtml = conn.inputStream.bufferedReader().use { it.readText() }
+                    
+                    val styledHtml = """
+                        <!DOCTYPE html>
+                        <html lang="en">
+                        <head>
+                            <meta charset="UTF-8">
+                            <meta name="viewport" content="width=1280, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes">
+                            <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/plugins/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+                            <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/css/helper.css" rel="stylesheet">
+                            <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/css/style.css" rel="stylesheet">
+                            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+                            <style>
+                                body { background-color: #f8f9fa; padding: 15px; font-family: sans-serif; }
+                                .card { background: #fff; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 15px; margin-bottom: 15px; }
+                                .card-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+                                .card-header h3 { width: 100%; display: flex; justify-content: space-between; align-items: center; margin: 0; }
+                                .pull-left { float: left !important; }
+                                .pull-right { float: right !important; }
+                                .text-center { text-align: center !important; }
+                                .btn { display: inline-block; margin: 2px; }
+                            </style>
+                        </head>
+                        <body>
+                            <div class="container-fluid" id="printpanel">
+                                $rawHtml
+                            </div>
+                            <script>
+                                function viewOrderSheet(caset, casen, casey) {
+                                    var cdata = "ct=" + caset + "&cn=" + casen + "&cy=" + casey;
+                                    ${'$'}.ajax({
+                                        url: 'https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get-order-sheets',
+                                        method: 'post',
+                                        data: cdata,
+                                        success: function(response) {
+                                            if ($('#viewOrderDiv').length) {
+                                                $('#viewOrderDiv').html(response);
+                                            } else {
+                                                $('body').append('<div id="viewOrderDiv" style="margin-top:20px;">' + response + '</div>');
+                                            }
+                                        }
+                                    });
+                                }
+                            </script>
+                        </body>
+                        </html>
+                    """.trimIndent()
+
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        caseDetailsHtml = styledHtml
+                        isLoading = false
+                    }
+                } else {
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        isLoading = false
+                        Toast.makeText(context, "Failed to load case status (Code: ${conn.responseCode})", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    isLoading = false
+                    Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(cin) {
+        loadCaseDetails()
+    }
+
+    fun openInExternalBrowser(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                setPackage("com.android.chrome")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (ex: Exception) {
+                Toast.makeText(context, "No web browser found to open link", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(
+                        onClick = { 
+                            onDisableDrawerGestures(false)
+                            onNavigateBack()
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Back to Dispatch", fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { loadCaseDetails() },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Reload", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Reload", fontSize = 12.sp)
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        onDisableDrawerGestures(false)
+                        onNavigateBack()
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text("Exit Portal", fontSize = 12.sp)
+                }
+            }
+        }
+
+        if (isLoading) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+
+        Box(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+
+                        isVerticalScrollBarEnabled = true
+                        isHorizontalScrollBarEnabled = true
+                        isScrollbarFadingEnabled = false
+                        scrollBarStyle = WebView.SCROLLBARS_INSIDE_OVERLAY
+                        overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
+
+                        val cookieManager = CookieManager.getInstance()
+                        cookieManager.setAcceptCookie(true)
+                        cookieManager.setAcceptThirdPartyCookies(this, true)
+
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            databaseEnabled = true
+                            
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
+                            setSupportZoom(true)
+                            builtInZoomControls = true
+                            displayZoomControls = false
+                            
+                            javaScriptCanOpenWindowsAutomatically = true
+                            setSupportMultipleWindows(false)
+                            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            
+                            userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                        }
+
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
+                                val hitTestResult = view?.hitTestResult
+                                hitTestResult?.extra?.let { url ->
+                                    openInExternalBrowser(url)
+                                }
+                                return false
+                            }
+
+                            override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                Toast.makeText(ctx, message ?: "Alert", Toast.LENGTH_SHORT).show()
+                                result?.confirm()
+                                return true
+                            }
+
+                            override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                result?.confirm()
+                                return true
+                            }
+                        }
+
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                val url = request?.url.toString()
+                                if (url.contains("order", ignoreCase = true) || url.contains("judgment", ignoreCase = true) || url.contains("popup", ignoreCase = true) || url.contains("get-order-sheets", ignoreCase = true)) {
+                                    openInExternalBrowser(url)
+                                    return true
+                                }
+                                view?.loadUrl(url)
+                                return true
+                            }
+
+                            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
+                                handler?.proceed()
+                            }
+                        }
+                        webView = this
+                    }
+                },
+                update = { view ->
+                    caseDetailsHtml?.let { html ->
+                        view.loadDataWithBaseURL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails", html, "text/html", "UTF-8", "https://www.allahabadhighcourt.in")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().fillMaxHeight()
+            )
+        }
+    }
+}
+
+@Composable
 fun CauseListIngestionView(
     courtNo: String,
     onCourtNoChange: (String) -> Unit,
@@ -2185,9 +2770,157 @@ fun CauseListIngestionView(
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun CauseListStatusWebViewContent(
-    onNavigateBack: () -> Unit,
-    onDisableDrawerGestures: (Boolean) -> Unit
-) {}
+fun AddCaseMetaDataDialog(
+    record: FileRecord,
+    onDismiss: () -> Unit,
+    onSave: (FileRecord) -> Unit
+) {
+    var metaType by remember { mutableStateOf("REPORT") }
+    var selectedReportOption by remember { mutableStateOf("") }
+    var customReportText by remember { mutableStateOf("") }
+    var reportDateInput by remember { mutableStateOf("") }
+    
+    var appNoInput by remember { mutableStateOf("") }
+    var appYearInput by remember { mutableStateOf("2026") }
+
+    val reportOptions = listOf(
+        "Notice: Served",
+        "Notice: Unserved",
+        "Compromise: Done",
+        "Compromise: Not Done",
+        "Mediation Report",
+        "Other Report"
+    )
+
+    val isReportValid = if (selectedReportOption == "Other Report") {
+        customReportText.isNotBlank()
+    } else {
+        selectedReportOption.isNotBlank()
+    }
+
+    val isAppValid = appNoInput.isNotBlank() && appYearInput.isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Case Meta-Data: ${record.fileNo}", fontSize = 15.sp) },
+        text = {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceAround
+                ) {
+                    FilterChip(
+                        selected = metaType == "REPORT",
+                        onClick = { metaType = "REPORT" },
+                        label = { Text("Keep Report") }
+                    )
+                    FilterChip(
+                        selected = metaType == "APPLICATION",
+                        onClick = { metaType = "APPLICATION" },
+                        label = { Text("Add Application") }
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (metaType == "REPORT") {
+                    var dropdownExpanded by remember { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(
+                            value = selectedReportOption.ifEmpty { "Choose Report Type..." },
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Select Report Type *") },
+                            trailingIcon = {
+                                IconButton(onClick = { dropdownExpanded = true }) {
+                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        DropdownMenu(
+                            expanded = dropdownExpanded,
+                            onDismissRequest = { dropdownExpanded = false }
+                        ) {
+                            reportOptions.forEach { opt ->
+                                DropdownMenuItem(
+                                    text = { Text(opt) },
+                                    onClick = {
+                                        selectedReportOption = opt
+                                        dropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    if (selectedReportOption == "Other Report") {
+                        OutlinedTextField(
+                            value = customReportText,
+                            onValueChange = { customReportText = it },
+                            label = { Text("Specify Report Description *") },
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                        )
+                    }
+
+                    OutlinedTextField(
+                        value = reportDateInput,
+                        onValueChange = { reportDateInput = it },
+                        label = { Text("Report Date (Optional, e.g. 21-09-26)") },
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                    )
+                } else {
+                    OutlinedTextField(
+                        value = appNoInput,
+                        onValueChange = { appNoInput = it },
+                        label = { Text("App No (e.g. 9)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = appYearInput,
+                        onValueChange = { appYearInput = it },
+                        label = { Text("Year (e.g. 2026)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "Format: [App No]/[Year]",
+                        fontSize = 11.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = (metaType == "REPORT" && isReportValid) || (metaType == "APPLICATION" && isAppValid),
+                onClick = {
+                    val currentDate = SimpleDateFormat("dd-MM-yy", Locale.getDefault()).format(Date())
+                    if (metaType == "REPORT") {
+                        val label = if (selectedReportOption == "Other Report") customReportText.trim() else selectedReportOption
+                        val suffix = if (reportDateInput.isNotBlank()) " (Date: ${reportDateInput.trim()})" else ""
+                        val str = "$label$suffix"
+                        val updatedReports = if (record.reportsOnRecord.isBlank()) str else "${record.reportsOnRecord}\n$str"
+                        val log = "${record.historyLog}\n[$currentDate] Placed on Record -> $str"
+                        onSave(record.copy(reportsOnRecord = updatedReports, historyLog = log))
+                    } else {
+                        val app = "${appNoInput.trim()}/${appYearInput.trim()}"
+                        val updatedApps = if (record.applicationsOnRecord.isBlank()) app else "${record.applicationsOnRecord}, $app"
+                        val log = "${record.historyLog}\n[$currentDate] Application Tagged -> $app"
+                        onSave(record.copy(applicationsOnRecord = updatedApps, historyLog = log))
+                    }
+                }
+            ) {
+                Text("Save Meta-Data")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
