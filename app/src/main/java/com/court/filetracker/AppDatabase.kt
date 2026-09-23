@@ -43,7 +43,8 @@ interface CauseListDao {
     suspend fun deleteCauseListsUpToDate(cutoffDate: String): Int
 }
 
-@Database(entities = [FileRecord::class, CauseListRecord::class], version = 2, exportSchema = false)
+// Bump version from 3 to 4 to force safe schema recreation via fallbackToDestructiveMigration()
+@Database(entities = [FileRecord::class, CauseListRecord::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun fileRecordDao(): FileRecordDao
     abstract fun causeListDao(): CauseListDao

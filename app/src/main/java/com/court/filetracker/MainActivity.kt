@@ -6,7 +6,6 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.util.Base64
 import android.view.ViewGroup
 import android.webkit.*
 import android.widget.Toast
@@ -14,13 +13,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -29,7 +25,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -37,20 +32,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
-import androidx.core.content.FileProvider
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.net.URL
+import java.net.HttpURLConnection
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -94,12 +83,6 @@ fun normalizeDate(input: String): String = input.trim()
 fun normalizeSearchQuery(input: String): String = input.trim()
 fun stripLeadingZeros(input: String): String = input.trim().trimStart('0').ifEmpty { "0" }
 
-/**
- * True Historical Multi-Date Dispatch Tracking Engine
- * Scans the immutable audit log for dispatch events matching [targetDate].
- * Even if a file's current status is "Not Sent to Court" or moved elsewhere today,
- * if it was dispatched on targetDate, it will correctly appear.
- */
 fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<String> {
     val courtsFound = mutableSetOf<String>()
     val targetTag = "[$targetDate]"
@@ -121,7 +104,6 @@ fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<Stri
         }
     }
 
-    // Fallback check against dispatchDatesCsv if logged dates exist
     if (courtsFound.isEmpty() && record.dispatchDatesCsv.split(",").map { it.trim() }.contains(targetDate)) {
         if (record.courtNo != "N/A" && record.courtNo.isNotBlank()) {
             courtsFound.add(stripLeadingZeros(record.courtNo))
@@ -195,6 +177,8 @@ fun MainAppScreen(
     var selectedClCourtChip by remember { mutableStateOf<String?>(null) }
     var clSearchQuery by remember { mutableStateOf("") }
 
+    var activePortalCin by remember { mutableStateOf<String?>(null) }
+
     var activeTraceRecord by remember { mutableStateOf<FileRecord?>(null) }
     var activeUpdateRecord by remember { mutableStateOf<FileRecord?>(null) }
     var targetFileForMetaData by remember { mutableStateOf<FileRecord?>(null) }
@@ -207,7 +191,7 @@ fun MainAppScreen(
     val normalizedInterlocatorDate = remember(searchDateInterlocator) { if (searchDateInterlocator.isBlank()) "" else normalizeDate(searchDateInterlocator) }
 
     LaunchedEffect(Unit) {
-        scope.launch(Dispatchers.IO) {
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val records = dao.getAllRecords().first()
             val dirty = records.filter { it.status == "Cause List Identified" }
             if (dirty.isNotEmpty()) {
@@ -373,6 +357,7 @@ fun MainAppScreen(
                         label = { Text("Cause List Portal") },
                         selected = currentView == "CAUSE_LIST_PORTAL",
                         onClick = {
+                            activePortalCin = null
                             currentView = "CAUSE_LIST_PORTAL"
                             scope.launch { drawerState.close() }
                         },
@@ -469,6 +454,7 @@ fun MainAppScreen(
                                 "ADD_CAUSE_LIST" -> "Add Cause List Portal"
                                 "DISPATCH_CAUSE_LIST" -> "Dispatch from Cause List"
                                 "REPORTS_PANEL" -> "PDF Reports Engine"
+                                "LIVE_CASE_STATUS" -> "Case Status Details"
                                 else -> "Tracker Pro"
                             },
                             fontSize = 16.sp
@@ -478,6 +464,7 @@ fun MainAppScreen(
                         if (currentView != "MAIN") {
                             IconButton(onClick = { 
                                 isDrawerLocked = false
+                                activePortalCin = null
                                 currentView = "MAIN"
                                 activeSearchOption = "NONE"
                                 searchSelectedCourt = null
@@ -497,7 +484,7 @@ fun MainAppScreen(
                 modifier = Modifier
                     .padding(padding)
                     .fillMaxSize()
-                    .then(if (currentView == "ADD_CAUSE_LIST" || currentView == "CAUSE_LIST_PORTAL") Modifier else Modifier.padding(12.dp))
+                    .then(if (currentView == "ADD_CAUSE_LIST" || currentView == "CAUSE_LIST_PORTAL" || currentView == "LIVE_CASE_STATUS") Modifier else Modifier.padding(12.dp))
             ) {
                 when (currentView) {
                     "CAUSE_LIST_PORTAL" -> {
@@ -510,52 +497,63 @@ fun MainAppScreen(
                         )
                     }
 
-"ADD_CAUSE_LIST" -> {
-    if (!isClWebActive) {
-        Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Text("Add Cause List to Tracker", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = addClCourtInput,
-                    onValueChange = { addClCourtInput = it },
-                    label = { Text("Court Number *") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = addClDateInput,
-                    onValueChange = { addClDateInput = it },
-                    label = { Text("Cause List Date (dd-MM-yy) *") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Button(
-                    enabled = addClCourtInput.isNotBlank() && addClDateInput.isNotBlank(),
-                    onClick = { isClWebActive = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("OPEN CAUSE LIST PORTAL")
-                }
-            }
-        }
-    } else {
-        CauseListIngestionWebView(
-            courtNo = addClCourtInput.trim(),
-            date = addClDateInput.trim(),
-            causeListDao = causeListDao,
-            onClose = { 
-                isDrawerLocked = false
-                isClWebActive = false 
-            },
-            onDisableDrawerGestures = { locked -> isDrawerLocked = locked }
-        )
-    }
-}
+                    "LIVE_CASE_STATUS" -> {
+                        LiveCaseStatusPortalView(
+                            cin = activePortalCin ?: "",
+                            onNavigateBack = {
+                                isDrawerLocked = false
+                                activePortalCin = null
+                                currentView = "DISPATCH_CAUSE_LIST"
+                            },
+                            onDisableDrawerGestures = { locked -> isDrawerLocked = locked }
+                        )
+                    }
 
-                  "DISPATCH_CAUSE_LIST" -> {
-                        // State for comma-separated serial number filtering
+                    "ADD_CAUSE_LIST" -> {
+                        if (!isClWebActive) {
+                            Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text("Add Cause List to Tracker", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    OutlinedTextField(
+                                        value = addClCourtInput,
+                                        onValueChange = { addClCourtInput = it },
+                                        label = { Text("Court Number *") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    OutlinedTextField(
+                                        value = addClDateInput,
+                                        onValueChange = { addClDateInput = it },
+                                        label = { Text("Cause List Date (dd-MM-yy) *") },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Button(
+                                        enabled = addClCourtInput.isNotBlank() && addClDateInput.isNotBlank(),
+                                        onClick = { isClWebActive = true },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("OPEN CAUSE LIST PORTAL")
+                                    }
+                                }
+                            }
+                        } else {
+                            CauseListIngestionWebView(
+                                courtNo = addClCourtInput.trim(),
+                                date = addClDateInput.trim(),
+                                causeListDao = causeListDao,
+                                onClose = { 
+                                    isDrawerLocked = false
+                                    isClWebActive = false 
+                                },
+                                onDisableDrawerGestures = { locked -> isDrawerLocked = locked }
+                            )
+                        }
+                    }
+
+                    "DISPATCH_CAUSE_LIST" -> {
                         var serialFilterInput by remember { mutableStateOf("") }
                         var selectedDispatchFileIds by remember { mutableStateOf(setOf<Long>()) }
 
@@ -604,14 +602,12 @@ fun MainAppScreen(
                                     modifier = Modifier.fillMaxWidth()
                                 )
 
-                                // Parse comma-separated serial numbers from input
                                 val targetSerials = remember(serialFilterInput) {
                                     serialFilterInput.split(",")
                                         .map { it.trim() }
                                         .filter { it.isNotBlank() }
                                 }
 
-                                // Filter logic applying exact match, connected sub-cases (e.g. 139.1), and all corrections
                                 val filteredCases = activeCourtCases.filter { clRecord ->
                                     val matchesTextQuery = if (clSearchQuery.isBlank()) true else {
                                         clRecord.fileNo.contains(clSearchQuery, ignoreCase = true) ||
@@ -636,7 +632,6 @@ fun MainAppScreen(
                                     }
                                 }
 
-                                // Bulk Dispatch Action Row
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -759,12 +754,24 @@ fun MainAppScreen(
                                                                 }
                                                                 Badge { Text(clRecord.listType) }
                                                             }
-                                                            Text(clRecord.fileNo, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                                            Text(
+                                                                text = clRecord.fileNo,
+                                                                fontWeight = FontWeight.Bold,
+                                                                fontSize = 14.sp,
+                                                                color = MaterialTheme.colorScheme.primary,
+                                                                modifier = Modifier.clickable {
+                                                                    if (!clRecord.caseCin.isNullOrBlank()) {
+                                                                        activePortalCin = clRecord.caseCin
+                                                                        currentView = "LIVE_CASE_STATUS"
+                                                                    } else {
+                                                                        Toast.makeText(context, "No CIN available for this case.", Toast.LENGTH_SHORT).show()
+                                                                    }
+                                                                }
+                                                            )
                                                         }
 
                                                         Text("${clRecord.caseType} | ${clRecord.partyName}", fontSize = 12.sp, maxLines = 2, modifier = Modifier.padding(vertical = 2.dp))
 
-                                                        // Complete Local Tracker Status, Location, Remarks & Metadata Summary Panel
                                                         Surface(
                                                             color = if (matchedLocal != null) Color(0xFFE8F5E9) else Color(0xFFFFF3E0),
                                                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
@@ -839,7 +846,6 @@ fun MainAppScreen(
                         }
                     }
 
-                  
                     "SEARCH_MENU" -> {
                         Column(modifier = Modifier.fillMaxSize()) {
                             Text("Select Search Method:", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
@@ -1467,7 +1473,6 @@ fun MainAppScreen(
                     }
 
                     else -> {
-                        // MAIN REGISTRATION SCREEN
                         Column(modifier = Modifier.fillMaxSize()) {
                             Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), elevation = CardDefaults.cardElevation(4.dp)) {
                                 Column(modifier = Modifier.padding(12.dp)) {
@@ -1585,10 +1590,14 @@ fun MainAppScreen(
                                                 val judge = if (isChamber) judgeNameInput.trim() else ""
 
                                                 val existingCsv = existing?.dispatchDatesCsv ?: ""
-                                                val updatedCsv = when {
-                                                    existingCsv.isBlank() -> cleanDate
-                                                    existingCsv.contains(cleanDate) -> existingCsv
-                                                    else -> "$existingCsv, $cleanDate"
+                                                val updatedCsv = if (isDispatched) {
+                                                    when {
+                                                        existingCsv.isBlank() -> cleanDate
+                                                        existingCsv.contains(cleanDate) -> existingCsv
+                                                        else -> "$existingCsv, $cleanDate"
+                                                    }
+                                                } else {
+                                                    existingCsv
                                                 }
 
                                                 val cleanCourtNo = if (isDispatched) stripLeadingZeros(courtNoInput) else "N/A"
@@ -1655,7 +1664,6 @@ fun MainAppScreen(
         }
     }
 
-    // BULK RECEIVED FROM COURT DIALOG
     if (showBulkReceivedDialog) {
         var selectedLocation by remember { mutableStateOf("Listing Seat") }
         var dropdownExpanded by remember { mutableStateOf(false) }
@@ -1740,7 +1748,6 @@ fun MainAppScreen(
         )
     }
 
-    // SET BULK LOCATION DIALOG
     if (showSetLocationDialog) {
         var inputLocText by remember { mutableStateOf("") }
         var changeAffectedDate by remember { mutableStateOf(currentDate) }
@@ -1838,7 +1845,6 @@ fun MainAppScreen(
         )
     }
 
-    // DISPOSAL UPDATE MODAL
     val currentRecordForUpdate = activeUpdateRecord
     if (currentRecordForUpdate != null) {
         var newStatus by remember { mutableStateOf(currentRecordForUpdate.status.ifEmpty { "Taken Up" }) }
@@ -2018,7 +2024,6 @@ fun MainAppScreen(
         )
     }
 
-    // AUDIT TRACE DIALOG
     val currentRecordForTrace = activeTraceRecord
     if (currentRecordForTrace != null) {
         AlertDialog(
@@ -2041,7 +2046,6 @@ fun MainAppScreen(
         )
     }
 
-    // META-DATA DIALOG
     targetFileForMetaData?.let { record ->
         AddCaseMetaDataDialog(
             record = record,
@@ -2056,7 +2060,6 @@ fun MainAppScreen(
         )
     }
 
-    // FLUSH DIALOG
     if (showFlushDialog) {
         var cutoffDateInput by remember { mutableStateOf(currentDate) }
         AlertDialog(
@@ -2159,15 +2162,22 @@ fun CauseListStatusWebViewContent(
         }
     }
 
-    // Helper to open external links (like "View" order sheets) directly in Chrome / system browser
     fun openInExternalBrowser(url: String) {
         try {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                setPackage("com.android.chrome")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             context.startActivity(intent)
         } catch (e: Exception) {
-            Toast.makeText(context, "No web browser found to open link", Toast.LENGTH_SHORT).show()
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (ex: Exception) {
+                Toast.makeText(context, "No web browser found to open link", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -2328,8 +2338,6 @@ fun CauseListStatusWebViewContent(
 
                         webChromeClient = object : WebChromeClient() {
                             override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
-                                // Intercept popup/new-tab requests (like clicking "View" judgments) and open in external browser (Chrome)
-                                val transport = resultMsg?.obj as? WebView.WebViewTransport
                                 val hitTestResult = view?.hitTestResult
                                 hitTestResult?.extra?.let { url ->
                                     openInExternalBrowser(url)
@@ -2375,7 +2383,6 @@ fun CauseListStatusWebViewContent(
 
                             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                                 val url = request?.url.toString()
-                                // If the link is attempting an external popup / view action, open it in Chrome
                                 if (url.contains("order", ignoreCase = true) || url.contains("judgment", ignoreCase = true) || url.contains("popup", ignoreCase = true)) {
                                     openInExternalBrowser(url)
                                     return true
@@ -2399,10 +2406,277 @@ fun CauseListStatusWebViewContent(
     }
 }
 
-/**
- * In-App Web View for "Add Cause List From Web":
- * Upgraded with desktop viewport mode, touch response, and locked drawer gestures.
- */
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun LiveCaseStatusPortalView(
+    cin: String,
+    onNavigateBack: () -> Unit,
+    onDisableDrawerGestures: (Boolean) -> Unit
+) {
+    var webView: WebView? by remember { mutableStateOf(null) }
+    var isLoading by remember { mutableStateOf(true) }
+    var caseDetailsHtml by remember { mutableStateOf<String?>(null) }
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    DisposableEffect(Unit) {
+        onDisableDrawerGestures(true)
+        onDispose {
+            onDisableDrawerGestures(false)
+        }
+    }
+
+    BackHandler {
+        if (webView?.canGoBack() == true) {
+            webView?.goBack()
+        } else {
+            onDisableDrawerGestures(false)
+            onNavigateBack()
+        }
+    }
+
+    fun loadCaseDetails() {
+        isLoading = true
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val url = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+                val payload = "cino=$cin"
+                conn.outputStream.use { os ->
+                    os.write(payload.toByteArray(Charsets.UTF_8))
+                }
+
+                if (conn.responseCode == HttpURLConnection.HTTP_OK) {
+                    val rawHtml = conn.inputStream.bufferedReader().use { it.readText() }
+                    
+                    val styledHtml = """
+                        <!DOCTYPE html>
+                        <html lang="en">
+                        <head>
+                            <meta charset="UTF-8">
+                            <meta name="viewport" content="width=1280, initial-scale=0.5, maximum-scale=3.0, user-scalable=yes">
+                            <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/plugins/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+                            <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/css/helper.css" rel="stylesheet">
+                            <link href="https://www.allahabadhighcourt.in/apps/status_ccms/assets/css/style.css" rel="stylesheet">
+                            <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+                            <style>
+                                body { background-color: #f8f9fa; padding: 15px; font-family: sans-serif; }
+                                .card { background: #fff; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 15px; margin-bottom: 15px; }
+                                .card-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+                                .card-header h3 { width: 100%; display: flex; justify-content: space-between; align-items: center; margin: 0; }
+                                .pull-left { float: left !important; }
+                                .pull-right { float: right !important; }
+                                .text-center { text-align: center !important; }
+                                .btn { display: inline-block; margin: 2px; }
+                            </style>
+                        </head>
+                        <body>
+                            <div class="container-fluid" id="printpanel">
+                                $rawHtml
+                            </div>
+                            <script>
+                                function viewOrderSheet(caset, casen, casey) {
+                                    var cdata = "ct=" + caset + "&cn=" + casen + "&cy=" + casey;
+                                    ${'$'}.ajax({
+                                        url: 'https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get-order-sheets',
+                                        method: 'post',
+                                        data: cdata,
+                                        success: function(response) {
+                                            if ($('#viewOrderDiv').length) {
+                                                $('#viewOrderDiv').html(response);
+                                            } else {
+                                                $('body').append('<div id="viewOrderDiv" style="margin-top:20px;">' + response + '</div>');
+                                            }
+                                        }
+                                    });
+                                }
+                            </script>
+                        </body>
+                        </html>
+                    """.trimIndent()
+
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        caseDetailsHtml = styledHtml
+                        isLoading = false
+                    }
+                } else {
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        isLoading = false
+                        Toast.makeText(context, "Failed to load case status (Code: ${conn.responseCode})", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    isLoading = false
+                    Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(cin) {
+        loadCaseDetails()
+    }
+
+    fun openInExternalBrowser(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                setPackage("com.android.chrome")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+            } catch (ex: Exception) {
+                Toast.makeText(context, "No web browser found to open link", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(
+                        onClick = { 
+                            onDisableDrawerGestures(false)
+                            onNavigateBack()
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Back to Dispatch", fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { loadCaseDetails() },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Reload", modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Reload", fontSize = 12.sp)
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        onDisableDrawerGestures(false)
+                        onNavigateBack()
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text("Exit Portal", fontSize = 12.sp)
+                }
+            }
+        }
+
+        if (isLoading) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+
+        Box(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+
+                        isVerticalScrollBarEnabled = true
+                        isHorizontalScrollBarEnabled = true
+                        isScrollbarFadingEnabled = false
+                        scrollBarStyle = WebView.SCROLLBARS_INSIDE_OVERLAY
+                        overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
+
+                        val cookieManager = CookieManager.getInstance()
+                        cookieManager.setAcceptCookie(true)
+                        cookieManager.setAcceptThirdPartyCookies(this, true)
+
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            databaseEnabled = true
+                            
+                            useWideViewPort = true
+                            loadWithOverviewMode = true
+                            setSupportZoom(true)
+                            builtInZoomControls = true
+                            displayZoomControls = false
+                            
+                            javaScriptCanOpenWindowsAutomatically = true
+                            setSupportMultipleWindows(true)
+                            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                            
+                            userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                        }
+
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onCreateWindow(view: WebView?, isDialog: Boolean, isUserGesture: Boolean, resultMsg: android.os.Message?): Boolean {
+                                val hitTestResult = view?.hitTestResult
+                                hitTestResult?.extra?.let { url ->
+                                    openInExternalBrowser(url)
+                                }
+                                return false
+                            }
+
+                            override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                Toast.makeText(ctx, message ?: "Alert", Toast.LENGTH_SHORT).show()
+                                result?.confirm()
+                                return true
+                            }
+
+                            override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                result?.confirm()
+                                return true
+                            }
+                        }
+
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+                                val url = request?.url.toString()
+                                if (url.contains("order", ignoreCase = true) || url.contains("judgment", ignoreCase = true) || url.contains("popup", ignoreCase = true) || url.contains("get-order-sheets", ignoreCase = true)) {
+                                    openInExternalBrowser(url)
+                                    return true
+                                }
+                                view?.loadUrl(url)
+                                return true
+                            }
+
+                            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
+                                handler?.proceed()
+                            }
+                        }
+                        webView = this
+                    }
+                },
+                update = { view ->
+                    caseDetailsHtml?.let { html ->
+                        view.loadDataWithBaseURL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails", html, "text/html", "UTF-8", "https://www.allahabadhighcourt.in")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().fillMaxHeight()
+            )
+        }
+    }
+}
+
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun CauseListIngestionWebView(
@@ -2421,7 +2695,6 @@ fun CauseListIngestionWebView(
     var lastHandledSignature by remember { mutableStateOf<String?>(null) }
     var hasPromptBeenShownForCurrentView by remember { mutableStateOf(false) }
 
-    // Disable navigation drawer swipe gestures while viewing the ingestion web view
     DisposableEffect(Unit) {
         onDisableDrawerGestures(true)
         onDispose {
@@ -2441,7 +2714,7 @@ fun CauseListIngestionWebView(
     class WebAppInterface {
         @JavascriptInterface
         fun onCauseListRendered(tableSignature: String, html: String) {
-            scope.launch(Dispatchers.Main) {
+            scope.launch(kotlinx.coroutines.Dispatchers.Main) {
                 if (!isImporting && 
                     !hasPromptBeenShownForCurrentView && 
                     tableSignature != lastHandledSignature && 
@@ -2478,24 +2751,25 @@ fun CauseListIngestionWebView(
                             webView?.evaluateJavascript(
                                 "(function() { return document.documentElement.outerHTML; })();"
                             ) { rawHtmlJson ->
-                                scope.launch(Dispatchers.IO) {
+                                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                     try {
                                         val unescaped = org.json.JSONTokener(rawHtmlJson).nextValue().toString()
                                         val parsed = WebCauseListParser.parseHtmlCauseList(unescaped, courtNo, date)
                                         if (parsed.isNotEmpty()) {
                                             causeListDao.insertAll(parsed)
-                                            withContext(Dispatchers.Main) {
+                                            val detectedType = parsed.firstOrNull()?.listType ?: "DCL"
+                                            withContext(kotlinx.coroutines.Dispatchers.Main) {
                                                 isImporting = false
-                                                Toast.makeText(context, "Successfully Imported ${parsed.size} Cases (${parsed.firstOrNull()?.listType ?: ""})!", Toast.LENGTH_LONG).show()
+                                                Toast.makeText(context, "Successfully Imported ${parsed.size} Cases (${detectedType})!", Toast.LENGTH_LONG).show()
                                             }
                                         } else {
-                                            withContext(Dispatchers.Main) {
+                                            withContext(kotlinx.coroutines.Dispatchers.Main) {
                                                 isImporting = false
                                                 Toast.makeText(context, "No active cause list table found on screen.", Toast.LENGTH_SHORT).show()
                                             }
                                         }
                                     } catch (e: Exception) {
-                                        withContext(Dispatchers.Main) {
+                                        withContext(kotlinx.coroutines.Dispatchers.Main) {
                                             isImporting = false
                                             Toast.makeText(context, "Parse Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                                         }
@@ -2545,7 +2819,6 @@ fun CauseListIngestionWebView(
                             domStorageEnabled = true
                             databaseEnabled = true
                             
-                            // Desktop Viewport Configuration
                             useWideViewPort = true
                             loadWithOverviewMode = true
                             setSupportZoom(true)
@@ -2556,7 +2829,6 @@ fun CauseListIngestionWebView(
                             setSupportMultipleWindows(false)
                             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                             
-                            // Standard Desktop User Agent to avoid mobile responsive truncation
                             userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
                         }
 
@@ -2608,6 +2880,10 @@ fun CauseListIngestionWebView(
                                     """.trimIndent(), null
                                 )
                             }
+
+                            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
+                                handler?.proceed()
+                            }
                         }
 
                         loadUrl("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist")
@@ -2632,24 +2908,24 @@ fun CauseListIngestionWebView(
                         val contentToParse = html
                         detectedHtmlToImport = null
                         isImporting = true
-                        scope.launch(Dispatchers.IO) {
+                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             try {
                                 val parsedRecords = WebCauseListParser.parseHtmlCauseList(contentToParse, courtNo, date)
                                 if (parsedRecords.isNotEmpty()) {
                                     causeListDao.insertAll(parsedRecords)
                                     val detectedType = parsedRecords.firstOrNull()?.listType ?: "DCL"
-                                    withContext(Dispatchers.Main) {
+                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
                                         isImporting = false
-                                        Toast.makeText(context, "Imported ${parsedRecords.size} Cases as '$detectedType'!", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, "Successfully Imported ${parsedRecords.size} Cases (${detectedType})!", Toast.LENGTH_LONG).show()
                                     }
                                 } else {
-                                    withContext(Dispatchers.Main) {
+                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
                                         isImporting = false
                                         Toast.makeText(context, "No rows could be extracted from this view.", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             } catch (e: Exception) {
-                                withContext(Dispatchers.Main) {
+                                withContext(kotlinx.coroutines.Dispatchers.Main) {
                                     isImporting = false
                                     Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                                 }
@@ -2671,12 +2947,6 @@ fun CauseListIngestionWebView(
     }
 }
 
-
-
-/**
- * Add Case Meta-Data Attachment Dialog
- * - Unselected by default: User must make an explicit selection
- */
 @Composable
 fun AddCaseMetaDataDialog(
     record: FileRecord,
