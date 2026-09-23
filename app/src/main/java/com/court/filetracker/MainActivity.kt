@@ -670,12 +670,16 @@ fun MainAppScreen(
                                                     val serialFormatted = "${clRecord.listType} - $cleanSerialVal"
 
                                                     val existing = dao.getRecordByFileNo(clRecord.fileNo)
-                                                    val existingCsv = existing?.dispatchDatesCsv ?: ""
-                                                    val updatedCsv = when {
-                                                        existingCsv.isBlank() -> cleanDate
-                                                        existingCsv.contains(cleanDate) -> existingCsv
-                                                        else -> "$existingCsv, $cleanDate"
-                                                    }
+                                               val existingCsv = existing?.dispatchDatesCsv ?: ""
+val updatedCsv = if (isDispatched) {
+    when {
+        existingCsv.isBlank() -> cleanDate
+        existingCsv.contains(cleanDate) -> existingCsv
+        else -> "$existingCsv, $cleanDate"
+    }
+} else {
+    existingCsv // Do not add date to dispatch CSV if Not Sent or Chamber
+}
 
                                                     val dispatchDetails = " | Court No: $targetCourt | Serial: $serialFormatted"
                                                     val entryLog = "[$cleanDate] Dispatched via Cause List$dispatchDetails"
