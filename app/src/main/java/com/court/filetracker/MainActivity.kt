@@ -32,7 +32,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -41,7 +40,6 @@ import java.util.Locale
 import java.net.URL
 import java.net.HttpURLConnection
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -179,7 +177,6 @@ fun MainAppScreen(
     var selectedClCourtChip by remember { mutableStateOf<String?>(null) }
     var clSearchQuery by remember { mutableStateOf("") }
 
-    // Target CIN to open via POST in web view panel
     var activePortalCin by remember { mutableStateOf<String?>(null) }
 
     var activeTraceRecord by remember { mutableStateOf<FileRecord?>(null) }
@@ -194,7 +191,7 @@ fun MainAppScreen(
     val normalizedInterlocatorDate = remember(searchDateInterlocator) { if (searchDateInterlocator.isBlank()) "" else normalizeDate(searchDateInterlocator) }
 
     LaunchedEffect(Unit) {
-        scope.launch(Dispatchers.IO) {
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val records = dao.getAllRecords().first()
             val dirty = records.filter { it.status == "Cause List Identified" }
             if (dirty.isNotEmpty()) {
@@ -670,16 +667,12 @@ fun MainAppScreen(
                                                     val serialFormatted = "${clRecord.listType} - $cleanSerialVal"
 
                                                     val existing = dao.getRecordByFileNo(clRecord.fileNo)
-                                               val existingCsv = existing?.dispatchDatesCsv ?: ""
-val updatedCsv = if (isDispatched) {
-    when {
-        existingCsv.isBlank() -> cleanDate
-        existingCsv.contains(cleanDate) -> existingCsv
-        else -> "$existingCsv, $cleanDate"
-    }
-} else {
-    existingCsv // Do not add date to dispatch CSV if Not Sent or Chamber
-}
+                                                    val existingCsv = existing?.dispatchDatesCsv ?: ""
+                                                    val updatedCsv = when {
+                                                        existingCsv.isBlank() -> cleanDate
+                                                        existingCsv.contains(cleanDate) -> existingCsv
+                                                        else -> "$existingCsv, $cleanDate"
+                                                    }
 
                                                     val dispatchDetails = " | Court No: $targetCourt | Serial: $serialFormatted"
                                                     val entryLog = "[$cleanDate] Dispatched via Cause List$dispatchDetails"
@@ -761,21 +754,20 @@ val updatedCsv = if (isDispatched) {
                                                                 }
                                                                 Badge { Text(clRecord.listType) }
                                                             }
-                                                            // Clickable case number: triggers POST call with cino payload and opens in portal web view
                                                             Text(
-    text = clRecord.fileNo,
-    fontWeight = FontWeight.Bold,
-    fontSize = 14.sp,
-    color = MaterialTheme.colorScheme.primary,
-    modifier = Modifier.clickable {
-        if (!clRecord.caseCin.isNullOrBlank()) {
-            activePortalCin = clRecord.caseCin
-            currentView = "LIVE_CASE_STATUS"
-        } else {
-            Toast.makeText(context, "No CIN available for this case.", Toast.LENGTH_SHORT).show()
-        }
-    }
-)
+                                                                text = clRecord.fileNo,
+                                                                fontWeight = FontWeight.Bold,
+                                                                fontSize = 14.sp,
+                                                                color = MaterialTheme.colorScheme.primary,
+                                                                modifier = Modifier.clickable {
+                                                                    if (!clRecord.caseCin.isNullOrBlank()) {
+                                                                        activePortalCin = clRecord.caseCin
+                                                                        currentView = "LIVE_CASE_STATUS"
+                                                                    } else {
+                                                                        Toast.makeText(context, "No CIN available for this case.", Toast.LENGTH_SHORT).show()
+                                                                    }
+                                                                }
+                                                            )
                                                         }
 
                                                         Text("${clRecord.caseType} | ${clRecord.partyName}", fontSize = 12.sp, maxLines = 2, modifier = Modifier.padding(vertical = 2.dp))
@@ -1598,10 +1590,14 @@ val updatedCsv = if (isDispatched) {
                                                 val judge = if (isChamber) judgeNameInput.trim() else ""
 
                                                 val existingCsv = existing?.dispatchDatesCsv ?: ""
-                                                val updatedCsv = when {
-                                                    existingCsv.isBlank() -> cleanDate
-                                                    existingCsv.contains(cleanDate) -> existingCsv
-                                                    else -> "$existingCsv, $cleanDate"
+                                                val updatedCsv = if (isDispatched) {
+                                                    when {
+                                                        existingCsv.isBlank() -> cleanDate
+                                                        existingCsv.contains(cleanDate) -> existingCsv
+                                                        else -> "$existingCsv, $cleanDate"
+                                                    }
+                                                } else {
+                                                    existingCsv
                                                 }
 
                                                 val cleanCourtNo = if (isDispatched) stripLeadingZeros(courtNoInput) else "N/A"
@@ -2409,6 +2405,7 @@ fun CauseListStatusWebViewContent(
         }
     }
 }
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun LiveCaseStatusPortalView(
@@ -2441,7 +2438,7 @@ fun LiveCaseStatusPortalView(
 
     fun loadCaseDetails() {
         isLoading = true
-        scope.launch(Dispatchers.IO) {
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val url = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails")
                 val conn = url.openConnection() as HttpURLConnection
@@ -2457,7 +2454,6 @@ fun LiveCaseStatusPortalView(
                 if (conn.responseCode == HttpURLConnection.HTTP_OK) {
                     val rawHtml = conn.inputStream.bufferedReader().use { it.readText() }
                     
-                    // Added flexbox and alignment rules to properly format headers and buttons
                     val styledHtml = """
                         <!DOCTYPE html>
                         <html lang="en">
@@ -2471,7 +2467,6 @@ fun LiveCaseStatusPortalView(
                             <style>
                                 body { background-color: #f8f9fa; padding: 15px; font-family: sans-serif; }
                                 .card { background: #fff; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); padding: 15px; margin-bottom: 15px; }
-                                /* Proper alignment fixes for portal headers and buttons */
                                 .card-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; }
                                 .card-header h3 { width: 100%; display: flex; justify-content: space-between; align-items: center; margin: 0; }
                                 .pull-left { float: left !important; }
@@ -2505,19 +2500,19 @@ fun LiveCaseStatusPortalView(
                         </html>
                     """.trimIndent()
 
-                    withContext(Dispatchers.Main) {
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
                         caseDetailsHtml = styledHtml
                         isLoading = false
                     }
                 } else {
-                    withContext(Dispatchers.Main) {
+                    withContext(kotlinx.coroutines.Dispatchers.Main) {
                         isLoading = false
                         Toast.makeText(context, "Failed to load case status (Code: ${conn.responseCode})", Toast.LENGTH_SHORT).show()
                     }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                withContext(Dispatchers.Main) {
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
                     isLoading = false
                     Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
@@ -2719,7 +2714,7 @@ fun CauseListIngestionWebView(
     class WebAppInterface {
         @JavascriptInterface
         fun onCauseListRendered(tableSignature: String, html: String) {
-            scope.launch(Dispatchers.Main) {
+            scope.launch(kotlinx.coroutines.Dispatchers.Main) {
                 if (!isImporting && 
                     !hasPromptBeenShownForCurrentView && 
                     tableSignature != lastHandledSignature && 
@@ -2756,25 +2751,25 @@ fun CauseListIngestionWebView(
                             webView?.evaluateJavascript(
                                 "(function() { return document.documentElement.outerHTML; })();"
                             ) { rawHtmlJson ->
-                                scope.launch(Dispatchers.IO) {
+                                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                     try {
                                         val unescaped = org.json.JSONTokener(rawHtmlJson).nextValue().toString()
                                         val parsed = WebCauseListParser.parseHtmlCauseList(unescaped, courtNo, date)
                                         if (parsed.isNotEmpty()) {
                                             causeListDao.insertAll(parsed)
                                             val detectedType = parsed.firstOrNull()?.listType ?: "DCL"
-                                            withContext(Dispatchers.Main) {
+                                            withContext(kotlinx.coroutines.Dispatchers.Main) {
                                                 isImporting = false
                                                 Toast.makeText(context, "Successfully Imported ${parsed.size} Cases (${detectedType})!", Toast.LENGTH_LONG).show()
                                             }
                                         } else {
-                                            withContext(Dispatchers.Main) {
+                                            withContext(kotlinx.coroutines.Dispatchers.Main) {
                                                 isImporting = false
                                                 Toast.makeText(context, "No active cause list table found on screen.", Toast.LENGTH_SHORT).show()
                                             }
                                         }
                                     } catch (e: Exception) {
-                                        withContext(Dispatchers.Main) {
+                                        withContext(kotlinx.coroutines.Dispatchers.Main) {
                                             isImporting = false
                                             Toast.makeText(context, "Parse Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                                         }
@@ -2913,24 +2908,24 @@ fun CauseListIngestionWebView(
                         val contentToParse = html
                         detectedHtmlToImport = null
                         isImporting = true
-                        scope.launch(Dispatchers.IO) {
+                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             try {
                                 val parsedRecords = WebCauseListParser.parseHtmlCauseList(contentToParse, courtNo, date)
                                 if (parsedRecords.isNotEmpty()) {
                                     causeListDao.insertAll(parsedRecords)
                                     val detectedType = parsedRecords.firstOrNull()?.listType ?: "DCL"
-                                    withContext(Dispatchers.Main) {
+                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
                                         isImporting = false
                                         Toast.makeText(context, "Successfully Imported ${parsedRecords.size} Cases (${detectedType})!", Toast.LENGTH_LONG).show()
                                     }
                                 } else {
-                                    withContext(Dispatchers.Main) {
+                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
                                         isImporting = false
                                         Toast.makeText(context, "No rows could be extracted from this view.", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             } catch (e: Exception) {
-                                withContext(Dispatchers.Main) {
+                                withContext(kotlinx.coroutines.Dispatchers.Main) {
                                     isImporting = false
                                     Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                                 }
