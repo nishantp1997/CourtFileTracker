@@ -3,6 +3,21 @@ package com.court.filetracker
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 
+data class CauseListRecord(
+    val id: Long = 0,
+    val causeListDate: String,
+    val courtNo: String,
+    val listType: String,
+    val serialNo: String,
+    val caseType: String,
+    val fileNo: String,
+    val partyName: String,
+    val statusTag: String,
+    val caseCin: String?,
+    val fileSerialNo: String = "",
+    val fileYear: String = "2026"
+)
+
 object WebCauseListParser {
 
     fun parseHtmlCauseList(
