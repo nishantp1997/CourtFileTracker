@@ -2088,7 +2088,7 @@ fun CauseListIngestionView(
             OutlinedTextField(
                 value = date,
                 onValueChange = onDateChange,
-                label = { Text("Cause List Date (dd-MM-yyyy) *") },
+                label = { Text("Cause List Date (dd-MM-yy or dd-MM-yyyy) *") },
                 modifier = Modifier.fillMaxWidth()
             )
             Spacer(modifier = Modifier.height(12.dp))
@@ -2104,12 +2104,31 @@ fun CauseListIngestionView(
                         scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                             try {
                                 val cleanCourtNo = courtNo.trim()
-                                val cleanDate = date.trim()
+                                val rawDateInput = date.trim()
 
-                                // 1. Flush existing records for this specific date and court number
-                                causeListDao.deleteForDateAndCourt(cleanDate, cleanCourtNo)
+                                // Normalize/Convert date formats:
+                                // Backend requires 4-digit year (dd-MM-yyyy)
+                                // Local DB / App architecture requires 2-digit year (dd-MM-yy)
+                                val apiDateFormat = SimpleDateFormat("dd-MM-yyyy", Locale.getDefault())
+                                val localDateFormat = SimpleDateFormat("dd-MM-yy", Locale.getDefault())
+                                
+                                val parsedDate: Date? = try {
+                                    if (rawDateInput.length == 8) {
+                                        SimpleDateFormat("dd-MM-yy", Locale.getDefault()).parse(rawDateInput)
+                                    } else {
+                                        apiDateFormat.parse(rawDateInput)
+                                    }
+                                } catch (e: Exception) {
+                                    null
+                                }
 
-                                // 2. Hit get_CauselistType endpoint
+                                val apiDateStr = if (parsedDate != null) apiDateFormat.format(parsedDate) else rawDateInput
+                                val localDateStr = if (parsedDate != null) localDateFormat.format(parsedDate) else rawDateInput
+
+                                // 1. Flush existing records for this specific local date and court number
+                                causeListDao.deleteForDateAndCourt(localDateStr, cleanCourtNo)
+
+                                // 2. Hit get_CauselistType endpoint using 4-digit year format
                                 val typeUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist_website/get_CauselistType")
                                 val typeConn = typeUrl.openConnection() as HttpURLConnection
                                 typeConn.requestMethod = "POST"
@@ -2117,7 +2136,7 @@ fun CauseListIngestionView(
                                 typeConn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
 
                                 val encodedCourt = URLEncoder.encode("Court No-$cleanCourtNo", "UTF-8")
-                                val typePayload = "case_date=$cleanDate&court_no=$encodedCourt&captchacode="
+                                val typePayload = "case_date=$apiDateStr&court_no=$encodedCourt&captchacode="
                                 typeConn.outputStream.use { os ->
                                     os.write(typePayload.toByteArray(Charsets.UTF_8))
                                 }
@@ -2126,15 +2145,8 @@ fun CauseListIngestionView(
                                     typeConn.inputStream.bufferedReader().use { it.readText() }
                                 } else ""
 
-                                // 3. Parse list types and list_type codes using Regex matching viewCauselist('date', 'court', 'list_type')
-                                // Example: onclick=viewCauselist('24-09-2026' ,'80' ,'1000' )
-                                val regex = Regex("viewCauselist\\(\\s*'[^']+'\\s*,\\s*'[^']+'\\s*,\\s*'([^']+)'\\s*\\)")
-                                val matches = regex.findAll(typeHtml)
-                                
-                                // Extract list type names nearby
+                                // 3. Parse list types and list_type codes
                                 val listTypesMap = mutableMapOf<String, String>() // code -> name
-                                
-                                // Let's also parse names more robustly by splitting on table rows
                                 val rowRegex = Regex("<tr>\\s*<td>\\s*<strong>(.*?)</strong>\\s*</td>\\s*<td>.*?viewCauselist\\([^)]*?'(\\d+)'\\s*\\).*?</td>\\s*</tr>", RegexOption.DOT_MATCHES_ALL)
                                 val rowMatches = rowRegex.findAll(typeHtml)
                                 for (rm in rowMatches) {
@@ -2143,9 +2155,9 @@ fun CauseListIngestionView(
                                     listTypesMap[code] = name
                                 }
 
-                                // Fallback if exact row regex fails, grab all codes from regex matches
                                 if (listTypesMap.isEmpty()) {
-                                    for (m in matches) {
+                                    val fallbackRegex = Regex("viewCauselist\\(\\s*'[^']+'\\s*,\\s*'[^']+'\\s*,\\s*'([^']+)'\\s*\\)")
+                                    for (m in fallbackRegex.findAll(typeHtml)) {
                                         val code = m.groupValues[1]
                                         listTypesMap[code] = "Cause List Type $code"
                                     }
@@ -2154,7 +2166,7 @@ fun CauseListIngestionView(
                                 val fetchBreakdown = mutableListOf<String>()
                                 var totalFetched = 0
 
-                                // 4. Iterate over each discovered list type code and fetch cases
+                                // 4. Iterate over each discovered list type code and fetch cases using apiDateStr
                                 for ((listTypeCode, listTypeName) in listTypesMap) {
                                     val clUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_causelist")
                                     val clConn = clUrl.openConnection() as HttpURLConnection
@@ -2162,7 +2174,7 @@ fun CauseListIngestionView(
                                     clConn.doOutput = true
                                     clConn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
 
-                                    val clPayload = "case_date=$cleanDate&court_no=$cleanCourtNo&list_type=$listTypeCode"
+                                    val clPayload = "case_date=$apiDateStr&court_no=$cleanCourtNo&list_type=$listTypeCode"
                                     clConn.outputStream.use { os ->
                                         os.write(clPayload.toByteArray(Charsets.UTF_8))
                                     }
@@ -2171,11 +2183,10 @@ fun CauseListIngestionView(
                                         clConn.inputStream.bufferedReader().use { it.readText() }
                                     } else ""
 
-                                    // Parse html cause list rows
-                                    val parsedRecords = WebCauseListParser.parseHtmlCauseList(clHtml, cleanCourtNo, cleanDate)
+                                    // Parse html cause list rows and save using localDateStr (dd-MM-yy) for architectural consistency
+                                    val parsedRecords = WebCauseListParser.parseHtmlCauseList(clHtml, cleanCourtNo, localDateStr)
                                     if (parsedRecords.isNotEmpty()) {
-                                        // Assign detected list type name if available
-                                        val taggedRecords = parsedRecords.map { it.copy(listType = listTypeName) }
+                                        val taggedRecords = parsedRecords.map { it.copy(listType = listTypeName, causeListDate = localDateStr) }
                                         causeListDao.insertAll(taggedRecords)
                                         fetchBreakdown.add("$listTypeName: ${taggedRecords.size} cases")
                                         totalFetched += taggedRecords.size
@@ -2187,7 +2198,7 @@ fun CauseListIngestionView(
                                     summaryMessage = if (totalFetched > 0) {
                                         "Successfully fetched $totalFetched total cases:\n\n" + fetchBreakdown.joinToString("\n")
                                     } else {
-                                        "No case records found for Court $cleanCourtNo on $cleanDate."
+                                        "No case records found for Court $cleanCourtNo on $localDateStr."
                                     }
                                 }
                             } catch (e: Exception) {
