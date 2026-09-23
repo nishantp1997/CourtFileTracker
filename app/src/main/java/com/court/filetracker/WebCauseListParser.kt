@@ -97,8 +97,11 @@ object WebCauseListParser {
                 continue
             }
 
-            val firstCellText = cells[0].text().trim()
-            val candidateSerial = firstCellText.toIntOrNull()
+            // Clean HTML tags to accurately extract E-Files (like rows 5, 73, 75) and standard rows
+            val rawSerialHtml = cells[0].html()
+            val cleanSerialText = rawSerialHtml.replace(Regex("<[^>]*>"), "").trim()
+            val digitMatch = Regex("^\\d+").find(cleanSerialText)
+            val candidateSerial = digitMatch?.value?.toIntOrNull()
 
             if (candidateSerial != null) {
                 lastMainSerial = candidateSerial.toString()
@@ -111,13 +114,27 @@ object WebCauseListParser {
                 val caseDetailText = caseDetailCell.text().trim()
                 val cleanParty = cleanPartyText(partyCell.text().trim())
 
-                val isCorrectionList = currentListType == "Correction"
-                val match = caseRegex.find(caseDetailText)
+                val isCorrectionList = currentListType.equals("Correction", true)
+                
+                // Parse Application Cases from Srl 238 onwards: isolate text after "in case" to get the correct main file reference
+                val inCaseIndex = caseDetailText.indexOf("in case", ignoreCase = true)
+                val targetTextForCase = if (inCaseIndex != -1) caseDetailText.substring(inCaseIndex) else caseDetailText
+
+                val appTypeMatch = Regex("\\(([^)]+)\\)").find(caseDetailText)
+                val appNoMatch = Regex("(\\d+/[\\d]{4})").find(caseDetailText)
+
+                val match = caseRegex.find(targetTextForCase) ?: caseRegex.find(caseDetailText)
 
                 if (match != null) {
                     val cType = match.groupValues[1].uppercase()
                     val fSerial = match.groupValues[2]
                     val fYear = match.groupValues[3]
+
+                    val finalCaseType = if (appTypeMatch != null && appNoMatch != null) {
+                        "${appTypeMatch.groupValues[1]} #${appNoMatch.groupValues[1]} in $cType"
+                    } else {
+                        cType
+                    }
 
                     records.add(
                         CauseListRecord(
@@ -126,7 +143,7 @@ object WebCauseListParser {
                             serialNo = lastMainSerial,
                             statusTag = statusTag.ifEmpty { if (isCorrectionList) "Correction" else "" },
                             listType = currentListType,
-                            caseType = cType,
+                            caseType = finalCaseType,
                             fileSerialNo = fSerial,
                             fileYear = fYear,
                             fileNo = "$fSerial/$fYear",
