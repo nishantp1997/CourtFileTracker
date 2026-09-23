@@ -56,7 +56,7 @@ object WebCauseListParser {
             val cells = row.select("td")
             if (cells.isEmpty()) continue
 
-            // Extract unique CIN from onclick attribute
+            // Extract unique CIN from onclick attribute (e.g., viewCaseData('1669840'))[cite: 1]
             val onclickAttr = row.select("[onclick]").attr("onclick")
             val extractedCin = if (onclickAttr.contains("viewCaseData")) {
                 Regex("'([^']+)'").find(onclickAttr)?.groupValues?.get(1) ?: ""
@@ -97,10 +97,11 @@ object WebCauseListParser {
                 continue
             }
 
-            // Clean HTML tags to accurately extract E-Files (like rows 5, 73, 75) and standard rows
+            // Robust E-File & Serial Extraction: Strip tags and extract leading digits (e.g. "5" from "5<br>E-File")
             val rawSerialHtml = cells[0].html()
             val cleanSerialText = rawSerialHtml.replace(Regex("<[^>]*>"), "").trim()
-            val candidateSerial = cleanSerialText.toIntOrNull()
+            val digitMatch = Regex("^\\d+").find(cleanSerialText)
+            val candidateSerial = digitMatch?.value?.toIntOrNull()
 
             if (candidateSerial != null) {
                 lastMainSerial = candidateSerial.toString()
@@ -115,7 +116,7 @@ object WebCauseListParser {
 
                 val isCorrectionList = currentListType.equals("Correction", true)
                 
-                // Explicitly parse Application Cases from Srl 238 onwards (e.g., Listing Application / Stay Vacation)
+                // Parse Application Cases from Srl 238 onwards (e.g. Listing Application / Stay Vacation)
                 val appTypeMatch = Regex("\\(([^)]+)\\)").find(caseDetailText)
                 val appNoMatch = Regex("(\\d+/[\\d]{4})").find(caseDetailText)
 
