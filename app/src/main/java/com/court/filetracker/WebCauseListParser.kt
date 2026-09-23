@@ -3,21 +3,6 @@ package com.court.filetracker
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 
-data class CauseListRecord(
-    val id: Long = 0,
-    val causeListDate: String,
-    val courtNo: String,
-    val listType: String,
-    val serialNo: String,
-    val caseType: String,
-    val fileNo: String,
-    val partyName: String,
-    val statusTag: String,
-    val caseCin: String?,
-    val fileSerialNo: String = "",
-    val fileYear: String = "2026"
-)
-
 object WebCauseListParser {
 
     fun parseHtmlCauseList(
@@ -71,7 +56,7 @@ object WebCauseListParser {
             val cells = row.select("td")
             if (cells.isEmpty()) continue
 
-            // Extract unique CIN from onclick attribute (e.g., viewCaseData('1669840'))[cite: 1]
+            // Extract unique CIN from onclick attribute
             val onclickAttr = row.select("[onclick]").attr("onclick")
             val extractedCin = if (onclickAttr.contains("viewCaseData")) {
                 Regex("'([^']+)'").find(onclickAttr)?.groupValues?.get(1) ?: ""
