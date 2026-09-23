@@ -41,6 +41,9 @@ interface CauseListDao {
 
     @Query("DELETE FROM cause_list_records WHERE causeListDate <= :cutoffDate")
     suspend fun deleteCauseListsUpToDate(cutoffDate: String): Int
+
+    @Query("DELETE FROM cause_list_records WHERE causeListDate = :date AND courtNo = :courtNo")
+    suspend fun deleteForDateAndCourt(date: String, courtNo: String): Int
 }
 
 // Bump version from 3 to 4 to force safe schema recreation via fallbackToDestructiveMigration()
