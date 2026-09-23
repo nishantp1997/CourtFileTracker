@@ -3,21 +3,6 @@ package com.court.filetracker
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 
-data class CauseListRecord(
-    val id: Long = 0,
-    val causeListDate: String,
-    val courtNo: String,
-    val listType: String,
-    val serialNo: String,
-    val caseType: String,
-    val fileNo: String,
-    val partyName: String,
-    val statusTag: String,
-    val caseCin: String?,
-    val fileSerialNo: String = "",
-    val fileYear: String = "2026"
-)
-
 object WebCauseListParser {
 
     fun parseHtmlCauseList(
@@ -71,7 +56,7 @@ object WebCauseListParser {
             val cells = row.select("td")
             if (cells.isEmpty()) continue
 
-            // Extract unique CIN from onclick attribute[cite: 1]
+            // Extract unique CIN from onclick attribute (e.g., viewCaseData('1669840'))[cite: 1]
             val onclickAttr = row.select("[onclick]").attr("onclick")
             val extractedCin = if (onclickAttr.contains("viewCaseData")) {
                 Regex("'([^']+)'").find(onclickAttr)?.groupValues?.get(1) ?: ""
@@ -112,10 +97,8 @@ object WebCauseListParser {
                 continue
             }
 
-            // Strip inner HTML tags (e.g., <br><span class="col-black">E-File</span>) to successfully read 5, 73, 75
-            val rawSerialHtml = cells[0].html()
-            val cleanSerialText = rawSerialHtml.replace(Regex("<[^>]*>"), "").trim()
-            val candidateSerial = cleanSerialText.toIntOrNull()
+            val firstCellText = cells[0].text().trim()
+            val candidateSerial = firstCellText.toIntOrNull()
 
             if (candidateSerial != null) {
                 lastMainSerial = candidateSerial.toString()
@@ -128,24 +111,13 @@ object WebCauseListParser {
                 val caseDetailText = caseDetailCell.text().trim()
                 val cleanParty = cleanPartyText(partyCell.text().trim())
 
-                val isCorrectionList = currentListType.equals("Correction", true)
-                
-                // Explicitly parse Application Cases from Srl 238 onwards (e.g. Listing Application / Stay Vacation)[cite: 2]
-                val appTypeMatch = Regex("\\(([^)]+)\\)").find(caseDetailText)
-                val appNoMatch = Regex("(\\d+/[\\d]+)").find(caseDetailText)
-
+                val isCorrectionList = currentListType == "Correction"
                 val match = caseRegex.find(caseDetailText)
 
                 if (match != null) {
                     val cType = match.groupValues[1].uppercase()
                     val fSerial = match.groupValues[2]
                     val fYear = match.groupValues[3]
-
-                    val finalCaseType = if (appTypeMatch != null && appNoMatch != null) {
-                        "${appTypeMatch.groupValues[1]} #${appNoMatch.groupValues[1]} in $cType"
-                    } else {
-                        cType
-                    }
 
                     records.add(
                         CauseListRecord(
@@ -154,7 +126,7 @@ object WebCauseListParser {
                             serialNo = lastMainSerial,
                             statusTag = statusTag.ifEmpty { if (isCorrectionList) "Correction" else "" },
                             listType = currentListType,
-                            caseType = finalCaseType,
+                            caseType = cType,
                             fileSerialNo = fSerial,
                             fileYear = fYear,
                             fileNo = "$fSerial/$fYear",
