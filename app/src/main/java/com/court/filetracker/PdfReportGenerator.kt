@@ -17,6 +17,7 @@ import com.itextpdf.layout.element.IBlockElement
 import com.itextpdf.layout.element.Link
 import com.itextpdf.layout.element.Paragraph
 import com.itextpdf.layout.element.Table
+import com.itextpdf.layout.properties.Property
 import com.itextpdf.layout.properties.TextAlignment
 import com.itextpdf.layout.properties.UnitValue
 import kotlinx.coroutines.CoroutineScope
@@ -71,19 +72,23 @@ object PdfReportGenerator {
                 }
 
                 records.forEach { record ->
+                    // Col 1: File No
                     table.addCell(Paragraph(record.fileNo).setFont(font).setFontSize(9f).setBold())
 
+                    // Col 2: Court & Serial
                     val courtSerial = "Court: ${record.courtNo}\nSerial: ${record.serialNo.ifEmpty { "N/A" }}"
                     table.addCell(Paragraph(courtSerial).setFont(font).setFontSize(8f))
 
+                    // Col 3: Status, Location, Meta-Data
                     val metaBuilder = StringBuilder()
                     metaBuilder.append("Status: ${record.status}\n")
                     if (record.storageLocation.isNotBlank()) metaBuilder.append("Loc: ${record.storageLocation}\n")
                     if (record.remarks.isNotBlank()) metaBuilder.append("Remarks: ${record.remarks}\n")
-                    if (record.reportsOnRecord.isNotBlank()) metaBuilder.append("Reports: ${record.reportsOnRecord.replace("\n", ", ")}\n")
-                    if (record.applicationsOnRecord.isNotBlank()) metaBuilder.append("Apps: ${record.applicationsOnRecord}\n")
+                    if (record.reportsOnRecord.isNotBlank()) metaBuilder.append("📑 Reports: ${record.reportsOnRecord.replace("\n", ", ")}\n")
+                    if (record.applicationsOnRecord.isNotBlank()) metaBuilder.append("📋 Apps: ${record.applicationsOnRecord}\n")
                     table.addCell(Paragraph(metaBuilder.toString().trim()).setFont(font).setFontSize(8f))
 
+                    // Col 4: Audit Stack Trace
                     table.addCell(Paragraph(record.historyLog.ifEmpty { "No log recorded." }).setFont(font).setFontSize(7f))
                 }
 
@@ -154,17 +159,26 @@ object PdfReportGenerator {
                 for (clRecord in selectedCases) {
                     val matchedLocal = allDbRecords.firstOrNull { it.fileNo == clRecord.fileNo }
 
-                    val cardTable = Table(UnitValue.createPercentArray(floatArrayOf(100f)))
+                    val cleanCaseType = extractCleanCaseType(clRecord.caseType)
+                    val parts = clRecord.fileNo.split("/")
+                    val caseNumber = if (parts.isNotEmpty()) parts[0].trim() else ""
+                    val caseYear = if (parts.size > 1) parts[1].trim() else "2026"
+
+                    // Direct Elegalix Order Sheet URL
+                    val orderSheetUrl = "https://elegalix.allahabadhighcourt.in/elegalix/WebDownloadOrderSheet.do?h=A&t=$cleanCaseType&n=$caseNumber&y=$caseYear&m=C"
+
+                    // Direct Case Status URL with CIN parameter and fallback to WebCaseInformation
+                    val caseStatusUrl = if (!clRecord.caseCin.isNullOrBlank()) {
+                        "https://www.allahabadhighcourt.in/apps/status_ccms"
+                    }
+
+                    // Card table layout (2 columns: 65% left, 35% right)
+                    val cardTable = Table(UnitValue.createPercentArray(floatArrayOf(65f, 35f)))
                     cardTable.setWidth(UnitValue.createPercentValue(100f))
                     cardTable.setBorder(SolidBorder(DeviceRgb(189, 189, 189), 1f))
                     cardTable.setMarginBottom(10f)
 
-                    val cardCell = Cell()
-                    cardCell.setPadding(8f)
-
-                    val headerTable = Table(UnitValue.createPercentArray(floatArrayOf(50f, 50f)))
-                    headerTable.setWidth(UnitValue.createPercentValue(100f))
-
+                    // Top-Left: Serial, Status Tag, List Type
                     val srText = StringBuilder("Sr: ${clRecord.serialNo}")
                     if (clRecord.statusTag.isNotBlank()) {
                         srText.append("  [${clRecord.statusTag}]")
@@ -173,40 +187,55 @@ object PdfReportGenerator {
 
                     val headerLeft = Paragraph(srText.toString())
                         .setFont(font).setFontSize(10f).setBold().setFontColor(DeviceRgb(25, 118, 210))
-                    headerTable.addCell(Cell().add(headerLeft).setBorder(com.itextpdf.layout.borders.Border.NO_BORDER))
+                    val leftHeaderCell = Cell().add(headerLeft)
+                        .setBorder(com.itextpdf.layout.borders.Border.NO_BORDER)
+                        .setPadding(6f)
+                    cardTable.addCell(leftHeaderCell)
 
-                    val caseNoParagraph = Paragraph().setTextAlignment(TextAlignment.RIGHT)
-                    if (!clRecord.caseCin.isNullOrBlank()) {
-                        val cinUrl = "https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_CaseDetails"
-                        val link = Link(clRecord.fileNo, PdfAction.createURI(cinUrl))
-                        link.setFont(font).setFontSize(10f).setBold().setFontColor(DeviceRgb(25, 118, 210)).setUnderline()
-                        caseNoParagraph.add(link)
-                    } else {
-                        caseNoParagraph.add(Paragraph(clRecord.fileNo).setFont(font).setFontSize(10f).setBold().setFontColor(DeviceRgb(25, 118, 210)))
-                    }
-                    headerTable.addCell(Cell().add(caseNoParagraph).setBorder(com.itextpdf.layout.borders.Border.NO_BORDER))
+                    // Top-Right: Clickable Case Number with exact Case Status Link Action
+                    val rightHeaderParagraph = Paragraph().setTextAlignment(TextAlignment.RIGHT)
+                    val caseLinkAction = PdfAction.createURI(caseStatusUrl)
+                    val caseLink = Link(clRecord.fileNo, caseLinkAction)
+                    caseLink.setProperty(Property.ACTION, caseLinkAction)
+                    caseLink.setFont(font).setFontSize(10f).setBold()
+                        .setFontColor(DeviceRgb(25, 118, 210))
+                        .setUnderline()
+                    rightHeaderParagraph.add(caseLink)
 
-                    cardCell.add(headerTable as IBlockElement)
+                    val rightHeaderCell = Cell().add(rightHeaderParagraph)
+                        .setBorder(com.itextpdf.layout.borders.Border.NO_BORDER)
+                        .setPadding(6f)
+                    cardTable.addCell(rightHeaderCell)
 
-                    val cleanCaseType = extractCleanCaseType(clRecord.caseType)
-                    val parts = clRecord.fileNo.split("/")
-                    val caseNumber = if (parts.isNotEmpty()) parts[0].trim() else ""
-                    val caseYear = if (parts.size > 1) parts[1].trim() else "2026"
-                    val orderSheetUrl = "https://elegalix.allahabadhighcourt.in/elegalix/WebDownloadOrderSheet.do?h=A&t=$cleanCaseType&n=$caseNumber&y=$caseYear&m=C"
+                    // Middle: Case Type, Party Name, and Clickable Order Sheet Action (Span 2 Columns)
+                    val partyCell = Cell(1, 2)
+                        .setBorder(com.itextpdf.layout.borders.Border.NO_BORDER)
+                        .setPaddingLeft(6f)
+                        .setPaddingRight(6f)
+                        .setPaddingBottom(4f)
 
                     val partyParagraph = Paragraph()
                         .setFont(font).setFontSize(9f)
                         .add("${clRecord.caseType} | ${clRecord.partyName}  ")
 
-                    val orderSheetLink = Link("[Order Sheet]", PdfAction.createURI(orderSheetUrl))
-                    orderSheetLink.setFont(font).setFontSize(8f).setBold().setFontColor(DeviceRgb(194, 24, 91)).setUnderline()
+                    val orderAction = PdfAction.createURI(orderSheetUrl)
+                    val orderSheetLink = Link("[Order Sheet]", orderAction)
+                    orderSheetLink.setProperty(Property.ACTION, orderAction)
+                    orderSheetLink.setFont(font).setFontSize(8.5f).setBold()
+                        .setFontColor(DeviceRgb(194, 24, 91))
+                        .setUnderline()
                     partyParagraph.add(orderSheetLink)
 
-                    cardCell.add(partyParagraph)
+                    partyCell.add(partyParagraph)
+                    cardTable.addCell(partyCell)
 
-                    val localInfoTable = Table(UnitValue.createPercentArray(floatArrayOf(100f)))
-                    localInfoTable.setWidth(UnitValue.createPercentValue(100f))
-                    val localCell = Cell().setPadding(6f)
+                    // Bottom: Local Tracker Status & Persistent Metadata (Span 2 Columns)
+                    val localCell = Cell(1, 2)
+                        .setPadding(6f)
+                        .setMarginLeft(6f)
+                        .setMarginRight(6f)
+                        .setMarginBottom(6f)
+                        .setBorder(SolidBorder(DeviceRgb(200, 230, 201), 1f))
 
                     if (matchedLocal != null) {
                         localCell.setBackgroundColor(DeviceRgb(232, 245, 233))
@@ -220,23 +249,18 @@ object PdfReportGenerator {
                             localCell.add(Paragraph("Remarks: ${matchedLocal.remarks}").setFont(font).setFontSize(8f).setBold().setFontColor(DeviceRgb(194, 24, 91)))
                         }
                         if (matchedLocal.reportsOnRecord.isNotBlank()) {
-                            localCell.add(Paragraph("Reports: ${matchedLocal.reportsOnRecord.replace("\n", ", ")}").setFont(font).setFontSize(8f).setFontColor(DeviceRgb(21, 101, 192)))
+                            localCell.add(Paragraph("📑 Reports: ${matchedLocal.reportsOnRecord.replace("\n", ", ")}").setFont(font).setFontSize(8f).setFontColor(DeviceRgb(21, 101, 192)))
                         }
                         if (matchedLocal.applicationsOnRecord.isNotBlank()) {
-                            localCell.add(Paragraph("Apps: ${matchedLocal.applicationsOnRecord}").setFont(font).setFontSize(8f).setFontColor(DeviceRgb(106, 27, 154)))
-                        }
-                        if (matchedLocal.historyLog.isNotBlank()) {
-                            localCell.add(Paragraph("Notes / History:\n${matchedLocal.historyLog}").setFont(font).setFontSize(7f).setFontColor(DeviceRgb(97, 97, 97)))
+                            localCell.add(Paragraph("📋 Apps: ${matchedLocal.applicationsOnRecord}").setFont(font).setFontSize(8f).setFontColor(DeviceRgb(106, 27, 154)))
                         }
                     } else {
                         localCell.setBackgroundColor(DeviceRgb(255, 243, 224))
+                        localCell.setBorder(SolidBorder(DeviceRgb(255, 224, 178), 1f))
                         localCell.add(Paragraph("File not yet registered in local tracker.").setFont(font).setFontSize(8f).setFontColor(DeviceRgb(230, 81, 0)))
                     }
 
-                    localInfoTable.addCell(localCell)
-                    cardCell.add(localInfoTable as IBlockElement)
-
-                    cardTable.addCell(cardCell)
+                    cardTable.addCell(localCell)
                     document.add(cardTable as IBlockElement)
                 }
 
