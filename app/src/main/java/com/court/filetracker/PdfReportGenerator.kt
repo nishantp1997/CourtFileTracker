@@ -13,6 +13,7 @@ import com.itextpdf.kernel.pdf.action.PdfAction
 import com.itextpdf.layout.Document
 import com.itextpdf.layout.borders.SolidBorder
 import com.itextpdf.layout.element.Cell
+import com.itextpdf.layout.element.IBlockElement
 import com.itextpdf.layout.element.Link
 import com.itextpdf.layout.element.Paragraph
 import com.itextpdf.layout.element.Table
@@ -72,7 +73,7 @@ object PdfReportGenerator {
                 records.forEach { record ->
                     table.addCell(Paragraph(record.fileNo).setFont(font).setFontSize(9f).setBold())
 
-                    val courtSerial = "Court: ${record.courtNo}\nSerial:${record.serialNo.ifEmpty { "N/A" }}"
+                    val courtSerial = "Court: ${record.courtNo}\nSerial: ${record.serialNo.ifEmpty { "N/A" }}"
                     table.addCell(Paragraph(courtSerial).setFont(font).setFontSize(8f))
 
                     val metaBuilder = StringBuilder()
@@ -86,7 +87,7 @@ object PdfReportGenerator {
                     table.addCell(Paragraph(record.historyLog.ifEmpty { "No log recorded." }).setFont(font).setFontSize(7f))
                 }
 
-                document.add(table)
+                document.add(table as IBlockElement)
                 document.close()
 
                 withContext(Dispatchers.Main) {
@@ -145,7 +146,7 @@ object PdfReportGenerator {
                         .setFont(font).setFontSize(14f).setBold().setTextAlignment(TextAlignment.CENTER)
                 )
                 document.add(
-                    Paragraph("Court No: $courtNo | Cause List Date: $date \vert{} Total Cases:${selectedCases.size}")
+                    Paragraph("Court No: $courtNo | Cause List Date: $date | Total Cases: ${selectedCases.size}")
                         .setFont(font).setFontSize(10f).setTextAlignment(TextAlignment.CENTER)
                 )
                 document.add(Paragraph("\n"))
@@ -153,7 +154,8 @@ object PdfReportGenerator {
                 for (clRecord in selectedCases) {
                     val matchedLocal = allDbRecords.firstOrNull { it.fileNo == clRecord.fileNo }
 
-                    val cardTable = Table(UnitValue.createPercentValue(100f))
+                    val cardTable = Table(UnitValue.createPercentArray(floatArrayOf(100f)))
+                    cardTable.setWidth(UnitValue.createPercentValue(100f))
                     cardTable.setBorder(SolidBorder(DeviceRgb(189, 189, 189), 1f))
                     cardTable.setMarginBottom(10f)
 
@@ -184,7 +186,7 @@ object PdfReportGenerator {
                     }
                     headerTable.addCell(Cell().add(caseNoParagraph).setBorder(com.itextpdf.layout.borders.Border.NO_BORDER))
 
-                    cardCell.add(headerTable)
+                    cardCell.add(headerTable as IBlockElement)
 
                     val cleanCaseType = extractCleanCaseType(clRecord.caseType)
                     val parts = clRecord.fileNo.split("/")
@@ -194,7 +196,7 @@ object PdfReportGenerator {
 
                     val partyParagraph = Paragraph()
                         .setFont(font).setFontSize(9f)
-                        .add("${clRecord.caseType} \vert{}${clRecord.partyName}  ")
+                        .add("${clRecord.caseType} | ${clRecord.partyName}  ")
 
                     val orderSheetLink = Link("[Order Sheet]", PdfAction.createURI(orderSheetUrl))
                     orderSheetLink.setFont(font).setFontSize(8f).setBold().setFontColor(DeviceRgb(194, 24, 91)).setUnderline()
@@ -202,12 +204,13 @@ object PdfReportGenerator {
 
                     cardCell.add(partyParagraph)
 
-                    val localInfoTable = Table(UnitValue.createPercentValue(100f))
+                    val localInfoTable = Table(UnitValue.createPercentArray(floatArrayOf(100f)))
+                    localInfoTable.setWidth(UnitValue.createPercentValue(100f))
                     val localCell = Cell().setPadding(6f)
 
                     if (matchedLocal != null) {
                         localCell.setBackgroundColor(DeviceRgb(232, 245, 233))
-                        val statusLine = "Local Tracker Status: '${matchedLocal.status}' (Court:${matchedLocal.courtNo})"
+                        val statusLine = "Local Tracker Status: '${matchedLocal.status}' (Court: ${matchedLocal.courtNo})"
                         localCell.add(Paragraph(statusLine).setFont(font).setFontSize(8f).setBold().setFontColor(DeviceRgb(46, 125, 50)))
 
                         if (matchedLocal.storageLocation.isNotBlank()) {
@@ -231,10 +234,10 @@ object PdfReportGenerator {
                     }
 
                     localInfoTable.addCell(localCell)
-                    cardCell.add(localInfoTable)
+                    cardCell.add(localInfoTable as IBlockElement)
 
                     cardTable.addCell(cardCell)
-                    document.add(cardTable)
+                    document.add(cardTable as IBlockElement)
                 }
 
                 document.close()
