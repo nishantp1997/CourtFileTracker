@@ -922,9 +922,6 @@ fun MainAppScreen(
                                                                     if (matchedLocal.applicationsOnRecord.isNotBlank()) {
                                                                         Text("Apps: ${matchedLocal.applicationsOnRecord}", fontSize = 11.sp, color = Color(0xFF6A1B9A), fontWeight = FontWeight.SemiBold)
                                                                     }
-                                                                    if (matchedLocal.historyLog.isNotBlank()) {
-                                                                        Text("Notes / History:\n${matchedLocal.historyLog}", fontSize = 10.sp, color = Color(0xFF424242), fontFamily = FontFamily.Monospace)
-                                                                    }
                                                                 } else {
                                                                     Text("File not yet registered in local tracker.", fontSize = 11.sp, color = Color(0xFFE65100))
                                                                 }
