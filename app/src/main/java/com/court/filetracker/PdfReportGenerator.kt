@@ -168,9 +168,7 @@ object PdfReportGenerator {
                     val orderSheetUrl = "https://elegalix.allahabadhighcourt.in/elegalix/WebDownloadOrderSheet.do?h=A&t=$cleanCaseType&n=$caseNumber&y=$caseYear&m=C"
 
                     // Direct Case Status URL with CIN parameter and fallback to WebCaseInformation
-                    val caseStatusUrl = if (!clRecord.caseCin.isNullOrBlank()) {
-                        "https://www.allahabadhighcourt.in/apps/status_ccms"
-                    }
+                    val caseStatusUrl = "https://www.allahabadhighcourt.in/apps/status_ccms"
 
                     // Card table layout (2 columns: 65% left, 35% right)
                     val cardTable = Table(UnitValue.createPercentArray(floatArrayOf(65f, 35f)))
