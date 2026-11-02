@@ -84,6 +84,61 @@ fun normalizeDate(input: String): String = input.trim()
 fun normalizeSearchQuery(input: String): String = input.trim()
 fun stripLeadingZeros(input: String): String = input.trim().trimStart('0').ifEmpty { "0" }
 
+fun parseDateToMillis(dateStr: String): Long? {
+    val clean = dateStr.trim()
+    if (clean.isBlank()) return null
+    val formats = listOf("dd-MM-yy", "dd-MM-yyyy", "d-M-yy", "d-M-yyyy")
+    for (pattern in formats) {
+        try {
+            val sdf = SimpleDateFormat(pattern, Locale.getDefault())
+            sdf.isLenient = false
+            val d = sdf.parse(clean)
+            if (d != null) return d.time
+        } catch (_: Exception) {}
+    }
+    return null
+}
+
+fun calculateDaysGoneBy(dateStr: String): Long? {
+    val timeMillis = parseDateToMillis(dateStr) ?: return null
+    val now = System.currentTimeMillis()
+    val diff = now - timeMillis
+    return if (diff < 0) 0L else diff / (1000L * 60 * 60 * 24)
+}
+
+fun getLatestDispatchDate(record: FileRecord): String {
+    val dates = record.dispatchDatesCsv.split(",")
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+    if (dates.isNotEmpty()) {
+        val sorted = dates.sortedByDescending { parseDateToMillis(it) ?: 0L }
+        return sorted.first()
+    }
+    if (record.dispatchDate.isNotBlank()) return record.dispatchDate.trim()
+    val regex = Regex("\\[(\\d{1,2}-\\d{1,2}-\\d{2,4})\\]")
+    val matches = regex.findAll(record.historyLog).map { it.groupValues[1] }.toList()
+    if (matches.isNotEmpty()) {
+        return matches.sortedByDescending { parseDateToMillis(it) ?: 0L }.first()
+    }
+    return ""
+}
+
+fun getChamberSentDate(record: FileRecord): String {
+    val lines = record.historyLog.split("\n")
+    val chamberDates = mutableListOf<String>()
+    for (line in lines) {
+        if (line.contains("Chamber", ignoreCase = true)) {
+            val m = Regex("\\[(\\d{1,2}-\\d{1,2}-\\d{2,4})\\]").find(line)
+            if (m != null) chamberDates.add(m.groupValues[1])
+        }
+    }
+    if (chamberDates.isNotEmpty()) {
+        return chamberDates.sortedByDescending { parseDateToMillis(it) ?: 0L }.first()
+    }
+    if (record.dispatchDate.isNotBlank()) return record.dispatchDate.trim()
+    return ""
+}
+
 fun extractCleanCaseType(rawCaseType: String): String {
     val inCaseIdx = rawCaseType.indexOf(" in ", ignoreCase = true)
     val extracted = if (inCaseIdx != -1) {
@@ -1214,11 +1269,15 @@ fun MainAppScreen(
                                     Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
                                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                             items(chamberFiles) { record ->
+                                                val chamberDate = getChamberSentDate(record)
+                                                val daysGone = if (chamberDate.isNotBlank()) calculateDaysGoneBy(chamberDate) else null
                                                 CaseCardWithMeta(
                                                     record = record,
                                                     onClick = { activeTraceRecord = record },
                                                     onUpdate = { activeUpdateRecord = record },
-                                                    onAddMeta = { targetFileForMetaData = record }
+                                                    onAddMeta = { targetFileForMetaData = record },
+                                                    dateInfoLabel = if (chamberDate.isNotBlank()) "$chamberDate" else null,
+                                                    daysGoneBy = daysGone
                                                 )
                                             }
                                         }
@@ -1230,11 +1289,15 @@ fun MainAppScreen(
                                     Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
                                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                             items(takenUpFiles) { record ->
+                                                val latestDate = getLatestDispatchDate(record)
+                                                val daysGone = if (latestDate.isNotBlank()) calculateDaysGoneBy(latestDate) else null
                                                 CaseCardWithMeta(
                                                     record = record,
                                                     onClick = { activeTraceRecord = record },
                                                     onUpdate = { activeUpdateRecord = record },
-                                                    onAddMeta = { targetFileForMetaData = record }
+                                                    onAddMeta = { targetFileForMetaData = record },
+                                                    dateInfoLabel = if (latestDate.isNotBlank()) "$latestDate" else null,
+                                                    daysGoneBy = daysGone
                                                 )
                                             }
                                         }
@@ -2385,19 +2448,54 @@ fun CaseCardWithMeta(
     record: FileRecord,
     onClick: () -> Unit,
     onUpdate: () -> Unit,
-    onAddMeta: () -> Unit
+    onAddMeta: () -> Unit,
+    dateInfoLabel: String? = null,
+    daysGoneBy: Long? = null
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick() },
-        colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
+        colors = CardDefaults.cardColors(
+            containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface
+        )
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
-                    Text(record.status, color = Color.White)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "File No: ${record.fileNo}",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (dateInfoLabel != null && daysGoneBy != null) {
+                        val badgeColor = when {
+                            daysGoneBy < 10 -> Color(0xFF1976D2)  // Blue (< 10 Days)
+                            daysGoneBy in 10..20 -> Color(0xFFE91E63) // Pink (10 to 20 Days)
+                            else -> Color(0xFF800000)             // Maroon (> 20 Days)
+                        }
+                        Badge(containerColor = badgeColor) {
+                            Text(
+                                text = "$dateInfoLabel ($daysGoneBy d)",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
+                        Text(record.status, color = Color.White)
+                    }
                 }
             }
+
             Text("Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
             if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
             if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
