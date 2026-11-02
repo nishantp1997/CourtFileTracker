@@ -84,6 +84,73 @@ fun normalizeDate(input: String): String = input.trim()
 fun normalizeSearchQuery(input: String): String = input.trim()
 fun stripLeadingZeros(input: String): String = input.trim().trimStart('0').ifEmpty { "0" }
 
+fun extractCleanCaseType(rawCaseType: String): String {
+    val inCaseIdx = rawCaseType.indexOf(" in ", ignoreCase = true)
+    val extracted = if (inCaseIdx != -1) {
+        rawCaseType.substring(inCaseIdx + 4).trim()
+    } else {
+        rawCaseType.trim()
+    }
+    val match = Regex("(?i)^([A-Za-z0-9]+)").find(extracted)
+    return match?.groupValues?.get(1)?.uppercase() ?: extracted.uppercase()
+}
+
+fun launchOrderSheetInChrome(context: Context, rawCaseType: String, fileNo: String) {
+    val cleanCaseType = extractCleanCaseType(rawCaseType)
+    val parts = fileNo.split("/")
+    val caseNumber = if (parts.isNotEmpty()) parts[0].trim() else ""
+    val caseYear = if (parts.size > 1) parts[1].trim() else "2026"
+
+    val orderSheetUrl = "https://elegalix.allahabadhighcourt.in/elegalix/WebDownloadOrderSheet.do?h=A&t=$cleanCaseType&n=$caseNumber&y=$caseYear&m=C"
+
+    try {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(orderSheetUrl)).apply {
+            setPackage("com.android.chrome")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(orderSheetUrl)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (ex: Exception) {
+            Toast.makeText(context, "No web browser found to open Order Sheet", Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+
+fun parseSerialRanges(input: String): Set<String> {
+    val resultSerials = mutableSetOf<String>()
+    val tokens = input.split(",").map { it.trim() }.filter { it.isNotBlank() }
+
+    for (token in tokens) {
+        if (token.contains("-")) {
+            val bounds = token.split("-").map { it.trim() }
+            if (bounds.size == 2) {
+                val start = bounds[0].toIntOrNull()
+                val end = bounds[1].toIntOrNull()
+                if (start != null && end != null) {
+                    val low = minOf(start, end)
+                    val high = maxOf(start, end)
+                    for (sr in low..high) {
+                        resultSerials.add(sr.toString())
+                    }
+                    continue
+                }
+            }
+        }
+        val single = token.toIntOrNull()
+        if (single != null) {
+            resultSerials.add(single.toString())
+        } else {
+            resultSerials.add(stripLeadingZeros(token))
+        }
+    }
+    return resultSerials
+}
+
 fun getDispatchedCourtsForDate(record: FileRecord, targetDate: String): Set<String> {
     val courtsFound = mutableSetOf<String>()
     val targetTag = "[$targetDate]"
@@ -176,7 +243,9 @@ fun MainAppScreen(
     var isClWebActive by remember { mutableStateOf(false) }
     var dispatchClDateInput by remember { mutableStateOf(currentDate) }
     var selectedClCourtChip by remember { mutableStateOf<String?>(null) }
-    var clSearchQuery by remember { mutableStateOf("") }
+
+    var dispatchSearchMode by remember { mutableStateOf("SERIAL") }
+    var dispatchSearchText by remember { mutableStateOf("") }
 
     var activePortalCin by remember { mutableStateOf<String?>(null) }
 
@@ -251,46 +320,56 @@ fun MainAppScreen(
         searchJudgeTextInput, searchRemarksTextInput, searchStatusOption, normalizedInterlocatorDate
     ) {
         allDbRecords.filter { rec ->
-            val matchesCategory = when (searchCategory) {
-                "LOCATION" -> {
-                    val targetLoc = if (searchLocOption == "Other") searchCustomLocText.trim() else searchLocOption
-                    if (targetLoc.isBlank()) false
-                    else rec.storageLocation.contains(targetLoc, ignoreCase = true)
+            if (normalizedInterlocatorDate.isBlank()) {
+                when (searchCategory) {
+                    "LOCATION" -> {
+                        val targetLoc = if (searchLocOption == "Other") searchCustomLocText.trim() else searchLocOption
+                        if (targetLoc.isBlank()) false
+                        else rec.storageLocation.equals(targetLoc, ignoreCase = true) || rec.storageLocation.contains(targetLoc, ignoreCase = true)
+                    }
+                    "JUDGE" -> {
+                        val query = searchJudgeTextInput.trim()
+                        if (query.isBlank()) false
+                        else rec.judgeName.contains(query, ignoreCase = true)
+                    }
+                    "REMARKS" -> {
+                        val query = searchRemarksTextInput.trim()
+                        if (query.isBlank()) false
+                        else rec.remarks.contains(query, ignoreCase = true)
+                    }
+                    "STATUS" -> rec.status == searchStatusOption
+                    else -> false
                 }
-                "JUDGE" -> {
-                    val query = searchJudgeTextInput.trim()
-                    if (query.isBlank()) false
-                    else rec.judgeName.contains(query, ignoreCase = true) || rec.historyLog.contains(query, ignoreCase = true)
-                }
-                "REMARKS" -> {
-                    val query = searchRemarksTextInput.trim()
-                    if (query.isBlank()) false
-                    else rec.remarks.contains(query, ignoreCase = true) || rec.historyLog.contains(query, ignoreCase = true)
-                }
-                "STATUS" -> rec.status == searchStatusOption
-                else -> false
-            }
-
-            if (!matchesCategory) return@filter false
-
-            if (normalizedInterlocatorDate.isNotBlank()) {
+            } else {
                 val targetDateTag = "[$normalizedInterlocatorDate]"
-                val hasLogEntryOnDate = rec.historyLog.split("\n").any { line ->
+                rec.historyLog.split("\n").any { line ->
                     if (!line.contains(targetDateTag)) return@any false
                     when (searchCategory) {
                         "LOCATION" -> {
                             val locVal = if (searchLocOption == "Other") searchCustomLocText.trim() else searchLocOption
-                            line.contains("Loc:", ignoreCase = true) && line.contains(locVal, ignoreCase = true)
+                            if (locVal.isBlank()) false
+                            else (line.contains("Loc:", ignoreCase = true) && line.contains(locVal, ignoreCase = true)) ||
+                                 (line.contains("Location updated to", ignoreCase = true) && line.contains(locVal, ignoreCase = true)) ||
+                                 (line.contains("Bulk Status changed to 'Received from Court' | Loc:", ignoreCase = true) && line.contains(locVal, ignoreCase = true))
                         }
-                        "JUDGE" -> line.contains("Judge:", ignoreCase = true) && line.contains(searchJudgeTextInput.trim(), ignoreCase = true)
-                        "REMARKS" -> line.contains("Remarks:", ignoreCase = true) && line.contains(searchRemarksTextInput.trim(), ignoreCase = true)
-                        "STATUS" -> line.contains("Status changed to '$searchStatusOption'", ignoreCase = true) || line.contains("Registered as '$searchStatusOption'", ignoreCase = true)
+                        "JUDGE" -> {
+                            val query = searchJudgeTextInput.trim()
+                            if (query.isBlank()) false
+                            else line.contains("Judge:", ignoreCase = true) && line.contains(query, ignoreCase = true)
+                        }
+                        "REMARKS" -> {
+                            val query = searchRemarksTextInput.trim()
+                            if (query.isBlank()) false
+                            else line.contains("Remarks:", ignoreCase = true) && line.contains(query, ignoreCase = true)
+                        }
+                        "STATUS" -> {
+                            line.contains("Status changed to '$searchStatusOption'", ignoreCase = true) ||
+                            line.contains("Registered as '$searchStatusOption'", ignoreCase = true) ||
+                            line.contains("Bulk Status changed to '$searchStatusOption'", ignoreCase = true)
+                        }
                         else -> false
                     }
                 }
-                hasLogEntryOnDate || (rec.dispatchDate == normalizedInterlocatorDate)
-            } else {
-                true
             }
         }
     }
@@ -512,148 +591,16 @@ fun MainAppScreen(
 
                     "ADD_CAUSE_LIST" -> {
                         if (!isClWebActive) {
-                            Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                    Text("Add Cause List to Tracker", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    OutlinedTextField(
-                                        value = addClCourtInput,
-                                        onValueChange = { addClCourtInput = it },
-                                        label = { Text("Court Number *") },
-                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    OutlinedTextField(
-                                        value = addClDateInput,
-                                        onValueChange = { addClDateInput = it },
-                                        label = { Text("Cause List Date (dd-MM-yy) *") },
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    
-                                    // Automated Multi-Step Ingestion Button
-                                    Button(
-                                        enabled = addClCourtInput.isNotBlank() && addClDateInput.isNotBlank(),
-                                        onClick = {
-                                            scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                                                try {
-                                                    val cleanCourtNo = addClCourtInput.trim()
-                                                    val rawInput = addClDateInput.trim()
-
-                                                    // Normalize date for API (dd-MM-yyyy) vs Cache (dd-MM-yy)
-                                                    val apiDateStr: String
-                                                    val localDateStr: String
-
-                                                    if (rawInput.length == 8) {
-                                                        localDateStr = rawInput
-                                                        val parts = rawInput.split("-")
-                                                        apiDateStr = if (parts.size == 3) {
-                                                            val yy = parts[2]
-                                                            val fullYear = if (yy.length == 2) "20$yy" else yy
-                                                            "${parts[0]}-${parts[1]}-$fullYear"
-                                                        } else rawInput
-                                                    } else if (rawInput.length == 10) {
-                                                        apiDateStr = rawInput
-                                                        val parts = rawInput.split("-")
-                                                        localDateStr = if (parts.size == 3) {
-                                                            val yyyy = parts[2]
-                                                            val shortYear = if (yyyy.length == 4) yyyy.takeLast(2) else yyyy
-                                                            "${parts[0]}-${parts[1]}-$shortYear"
-                                                        } else rawInput
-                                                    } else {
-                                                        apiDateStr = rawInput
-                                                        localDateStr = rawInput
-                                                    }
-
-                                                    causeListDao.deleteForDateAndCourt(localDateStr, cleanCourtNo)
-
-                                                    val typeUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist_website/get_CauselistType")
-                                                    val typeConn = typeUrl.openConnection() as HttpURLConnection
-                                                    typeConn.requestMethod = "POST"
-                                                    typeConn.doOutput = true
-                                                    typeConn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-
-                                                    val encodedCourt = URLEncoder.encode("Court No-$cleanCourtNo", "UTF-8")
-                                                    val typePayload = "case_date=$apiDateStr&court_no=$encodedCourt&captchacode="
-                                                    typeConn.outputStream.use { os ->
-                                                        os.write(typePayload.toByteArray(Charsets.UTF_8))
-                                                    }
-
-                                                    val typeHtml = if (typeConn.responseCode == HttpURLConnection.HTTP_OK) {
-                                                        typeConn.inputStream.bufferedReader().use { it.readText() }
-                                                    } else ""
-
-                                                    val listTypesMap = mutableMapOf<String, String>()
-                                                    val rowRegex = Regex("<tr>\\s*<td>\\s*<strong>(.*?)</strong>\\s*</td>\\s*<td>.*?viewCauselist\\([^)]*?'(\\d+)'\\s*\\).*?</td>\\s*</tr>", RegexOption.DOT_MATCHES_ALL)
-                                                    for (rm in rowRegex.findAll(typeHtml)) {
-                                                        listTypesMap[rm.groupValues[2].trim()] = rm.groupValues[1].trim()
-                                                    }
-
-                                                    if (listTypesMap.isEmpty()) {
-                                                        val fallbackRegex = Regex("viewCauselist\\(\\s*'[^']+'\\s*,\\s*'[^']+'\\s*,\\s*'([^']+)'\\s*\\)")
-                                                        for (m in fallbackRegex.findAll(typeHtml)) {
-                                                            listTypesMap[m.groupValues[1]] = "Cause List Type ${m.groupValues[1]}"
-                                                        }
-                                                    }
-
-                                                    val fetchBreakdown = mutableListOf<String>()
-                                                    var totalFetched = 0
-
-                                                    for ((listTypeCode, listTypeName) in listTypesMap) {
-                                                        val clUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_causelist")
-                                                        val clConn = clUrl.openConnection() as HttpURLConnection
-                                                        clConn.requestMethod = "POST"
-                                                        clConn.doOutput = true
-                                                        clConn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-
-                                                        val clPayload = "case_date=$apiDateStr&court_no=$cleanCourtNo&list_type=$listTypeCode"
-                                                        clConn.outputStream.use { os ->
-                                                            os.write(clPayload.toByteArray(Charsets.UTF_8))
-                                                        }
-
-                                                        val clHtml = if (clConn.responseCode == HttpURLConnection.HTTP_OK) {
-                                                            clConn.inputStream.bufferedReader().use { it.readText() }
-                                                        } else ""
-
-                                                        val parsedRecords = WebCauseListParser.parseHtmlCauseList(clHtml, cleanCourtNo, localDateStr)
-                                                        if (parsedRecords.isNotEmpty()) {
-                                                            val taggedRecords = parsedRecords.map { it.copy(listType = listTypeName, causeListDate = localDateStr) }
-                                                            causeListDao.insertAll(taggedRecords)
-                                                            fetchBreakdown.add("$listTypeName: ${taggedRecords.size} cases")
-                                                            totalFetched += taggedRecords.size
-                                                        }
-                                                    }
-
-                                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                                        if (totalFetched >  0) {
-                                                            Toast.makeText(context, "Successfully fetched $totalFetched cases!", Toast.LENGTH_LONG).show()
-                                                        } else {
-                                                            Toast.makeText(context, "No cases found. Opening Web Portal fallback...", Toast.LENGTH_SHORT).show()
-                                                            isClWebActive = true
-                                                        }
-                                                    }
-                                                } catch (e: Exception) {
-                                                    e.printStackTrace()
-                                                    withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                                        isClWebActive = true
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text("FETCH CAUSE LIST FROM WEB")
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    OutlinedButton(
-                                        onClick = { isClWebActive = true },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text("OPEN MANUAL WEB BROWSER PORTAL")
-                                    }
-                                }
-                            }
+                            CauseListIngestionView(
+                                courtNo = addClCourtInput,
+                                onCourtNoChange = { addClCourtInput = it },
+                                date = addClDateInput,
+                                onDateChange = { addClDateInput = it },
+                                causeListDao = causeListDao,
+                                context = context,
+                                scope = scope,
+                                onOpenManualWeb = { isClWebActive = true }
+                            )
                         } else {
                             CauseListIngestionWebView(
                                 courtNo = addClCourtInput.trim(),
@@ -669,7 +616,6 @@ fun MainAppScreen(
                     }
 
                     "DISPATCH_CAUSE_LIST" -> {
-                        var serialFilterInput by remember { mutableStateOf("") }
                         var selectedDispatchFileIds by remember { mutableStateOf(setOf<Long>()) }
 
                         Column(modifier = Modifier.fillMaxSize()) {
@@ -699,53 +645,78 @@ fun MainAppScreen(
                             }
 
                             if (selectedClCourtChip != null) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                OutlinedTextField(
-                                    value = serialFilterInput,
-                                    onValueChange = { serialFilterInput = it },
-                                    label = { Text("Serial Filter (Comma separated)") },
-                                    leadingIcon = { Icon(Icons.Default.List, contentDescription = null) },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    FilterChip(
+                                        selected = dispatchSearchMode == "SERIAL",
+                                        onClick = { dispatchSearchMode = "SERIAL" },
+                                        label = { Text("Serial No", fontSize = 11.sp) }
+                                    )
+                                    FilterChip(
+                                        selected = dispatchSearchMode == "PARTY",
+                                        onClick = { dispatchSearchMode = "PARTY" },
+                                        label = { Text("Party Name", fontSize = 11.sp) }
+                                    )
+                                    FilterChip(
+                                        selected = dispatchSearchMode == "FILE_NO",
+                                        onClick = { dispatchSearchMode = "FILE_NO" },
+                                        label = { Text("File No", fontSize = 11.sp) }
+                                    )
+                                }
 
                                 OutlinedTextField(
-                                    value = clSearchQuery,
-                                    onValueChange = { clSearchQuery = it },
-                                    label = { Text("Search Party Name or File No.") },
-                                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                                    modifier = Modifier.fillMaxWidth()
+                                    value = dispatchSearchText,
+                                    onValueChange = { dispatchSearchText = it },
+                                    label = {
+                                        Text(
+                                            when (dispatchSearchMode) {
+                                                "SERIAL" -> "Search Serial (e.g. 1-4, 7, 8)"
+                                                "PARTY" -> "Search Party Name"
+                                                else -> "Search File Number (e.g. 123/2026)"
+                                            }
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            if (dispatchSearchMode == "SERIAL") Icons.Default.List else Icons.Default.Search,
+                                            contentDescription = null
+                                        )
+                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                                 )
 
-                                val targetSerials = remember(serialFilterInput) {
-                                    serialFilterInput.split(",")
-                                        .map { it.trim() }
-                                        .filter { it.isNotBlank() }
+                                val targetSerials = remember(dispatchSearchText, dispatchSearchMode) {
+                                    if (dispatchSearchMode == "SERIAL" && dispatchSearchText.isNotBlank()) {
+                                        parseSerialRanges(dispatchSearchText)
+                                    } else emptySet()
                                 }
 
                                 val filteredCases = activeCourtCases.filter { clRecord ->
-                                    val matchesTextQuery = if (clSearchQuery.isBlank()) true else {
-                                        clRecord.fileNo.contains(clSearchQuery, ignoreCase = true) ||
-                                        clRecord.partyName.contains(clSearchQuery, ignoreCase = true) ||
-                                        clRecord.serialNo.contains(clSearchQuery, ignoreCase = true)
-                                    }
-
-                                    if (!matchesTextQuery) return@filter false
-
-                                    // Correction Application List cases ALWAYS bypass serial filter
                                     val isCorrection = clRecord.listType.contains("Correction", ignoreCase = true)
                                     if (isCorrection) return@filter true
 
-                                    if (targetSerials.isEmpty()) {
-                                        true
-                                    } else {
-                                        val cleanRecordSerial = stripLeadingZeros(clRecord.serialNo)
-                                        targetSerials.any { enteredSr ->
-                                            val cleanEntered = stripLeadingZeros(enteredSr)
-                                            cleanRecordSerial == cleanEntered || 
-                                            cleanRecordSerial.startsWith("$cleanEntered.") || 
-                                            cleanRecordSerial.startsWith("$cleanEntered/")
+                                    if (dispatchSearchText.isBlank()) return@filter true
+
+                                    when (dispatchSearchMode) {
+                                        "SERIAL" -> {
+                                            if (targetSerials.isEmpty()) true
+                                            else {
+                                                val cleanRecordSerial = stripLeadingZeros(clRecord.serialNo)
+                                                targetSerials.any { enteredSr ->
+                                                    val cleanEntered = stripLeadingZeros(enteredSr)
+                                                    cleanRecordSerial == cleanEntered || 
+                                                    cleanRecordSerial.startsWith("$cleanEntered.") || 
+                                                    cleanRecordSerial.startsWith("$cleanEntered/")
+                                                }
+                                            }
                                         }
+                                        "PARTY" -> clRecord.partyName.contains(dispatchSearchText.trim(), ignoreCase = true)
+                                        "FILE_NO" -> clRecord.fileNo.contains(dispatchSearchText.trim(), ignoreCase = true)
+                                        else -> true
                                     }
                                 }
 
@@ -769,58 +740,79 @@ fun MainAppScreen(
                                         }
                                     }
 
-                                    Button(
-                                        enabled = selectedDispatchFileIds.isNotEmpty(),
-                                        onClick = {
-                                            scope.launch {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        OutlinedButton(
+                                            enabled = selectedDispatchFileIds.isNotEmpty(),
+                                            onClick = {
                                                 val selectedItems = filteredCases.filter { selectedDispatchFileIds.contains(it.id) }
-                                                val cleanDate = normalizeDate(dispatchClDateInput)
-                                                val targetCourt = selectedClCourtChip ?: ""
-                                                val recordsToSave = mutableListOf<FileRecord>()
+                                                PdfReportGenerator.generateDispatchSharePdf(
+                                                    context = context,
+                                                    selectedCases = selectedItems,
+                                                    allDbRecords = allDbRecords,
+                                                    courtNo = selectedClCourtChip ?: "",
+                                                    date = dispatchClDateInput.trim()
+                                                )
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(Icons.Default.Share, contentDescription = "Share", modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Share", fontSize = 11.sp)
+                                        }
 
-                                                for (clRecord in selectedItems) {
-                                                    val cleanSerialVal = stripLeadingZeros(clRecord.serialNo)
-                                                    val serialFormatted = "${clRecord.listType} - $cleanSerialVal"
+                                        Button(
+                                            enabled = selectedDispatchFileIds.isNotEmpty(),
+                                            onClick = {
+                                                scope.launch {
+                                                    val selectedItems = filteredCases.filter { selectedDispatchFileIds.contains(it.id) }
+                                                    val cleanDate = normalizeDate(dispatchClDateInput)
+                                                    val targetCourt = selectedClCourtChip ?: ""
+                                                    val recordsToSave = mutableListOf<FileRecord>()
 
-                                                    val existing = dao.getRecordByFileNo(clRecord.fileNo)
-                                                    val existingCsv = existing?.dispatchDatesCsv ?: ""
-                                                    val updatedCsv = when {
-                                                        existingCsv.isBlank() -> cleanDate
-                                                        existingCsv.contains(cleanDate) -> existingCsv
-                                                        else -> "$existingCsv, $cleanDate"
+                                                    for (clRecord in selectedItems) {
+                                                        val cleanSerialVal = stripLeadingZeros(clRecord.serialNo)
+                                                        val serialFormatted = "${clRecord.listType} - $cleanSerialVal"
+
+                                                        val existing = dao.getRecordByFileNo(clRecord.fileNo)
+                                                        val existingCsv = existing?.dispatchDatesCsv ?: ""
+                                                        val updatedCsv = when {
+                                                            existingCsv.isBlank() -> cleanDate
+                                                            existingCsv.contains(cleanDate) -> existingCsv
+                                                            else -> "$existingCsv, $cleanDate"
+                                                        }
+
+                                                        val dispatchDetails = " | Court No: $targetCourt | Serial: $serialFormatted"
+                                                        val entryLog = "[$cleanDate] Dispatched via Cause List$dispatchDetails"
+                                                        val updatedHistory = if (existing != null) "${existing.historyLog}\n$entryLog" else entryLog
+
+                                                        val record = FileRecord(
+                                                            id = existing?.id ?: 0,
+                                                            fileNo = clRecord.fileNo,
+                                                            dispatchDate = cleanDate,
+                                                            dispatchDatesCsv = updatedCsv,
+                                                            courtNo = targetCourt,
+                                                            serialNo = serialFormatted,
+                                                            status = "Dispatched",
+                                                            storageLocation = "",
+                                                            sentToChamber = false,
+                                                            judgeName = "",
+                                                            remarks = existing?.remarks ?: "",
+                                                            historyLog = updatedHistory,
+                                                            reportsOnRecord = existing?.reportsOnRecord ?: "",
+                                                            applicationsOnRecord = existing?.applicationsOnRecord ?: ""
+                                                        )
+                                                        recordsToSave.add(record)
                                                     }
 
-                                                    val dispatchDetails = " | Court No: $targetCourt | Serial: $serialFormatted"
-                                                    val entryLog = "[$cleanDate] Dispatched via Cause List$dispatchDetails"
-                                                    val updatedHistory = if (existing != null) "${existing.historyLog}\n$entryLog" else entryLog
-
-                                                    val record = FileRecord(
-                                                        id = existing?.id ?: 0,
-                                                        fileNo = clRecord.fileNo,
-                                                        dispatchDate = cleanDate,
-                                                        dispatchDatesCsv = updatedCsv,
-                                                        courtNo = targetCourt,
-                                                        serialNo = serialFormatted,
-                                                        status = "Dispatched",
-                                                        storageLocation = "",
-                                                        sentToChamber = false,
-                                                        judgeName = "",
-                                                        remarks = existing?.remarks ?: "",
-                                                        historyLog = updatedHistory,
-                                                        reportsOnRecord = existing?.reportsOnRecord ?: "",
-                                                        applicationsOnRecord = existing?.applicationsOnRecord ?: ""
-                                                    )
-                                                    recordsToSave.add(record)
+                                                    dao.insertOrUpdateAll(recordsToSave)
+                                                    selectedDispatchFileIds = emptySet()
+                                                    Toast.makeText(context, "Successfully Dispatched ${recordsToSave.size} Cases to Court $targetCourt!", Toast.LENGTH_SHORT).show()
                                                 }
-
-                                                dao.insertOrUpdateAll(recordsToSave)
-                                                selectedDispatchFileIds = emptySet()
-                                                Toast.makeText(context, "Successfully Dispatched ${recordsToSave.size} Cases to Court $targetCourt!", Toast.LENGTH_SHORT).show()
-                                            }
-                                        },
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                                    ) {
-                                        Text("Bulk Dispatch (${selectedDispatchFileIds.size})", fontSize = 11.sp)
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("Bulk Dispatch (${selectedDispatchFileIds.size})", fontSize = 11.sp)
+                                        }
                                     }
                                 }
 
@@ -886,7 +878,30 @@ fun MainAppScreen(
                                                             )
                                                         }
 
-                                                        Text("${clRecord.caseType} | ${clRecord.partyName}", fontSize = 12.sp, maxLines = 2, modifier = Modifier.padding(vertical = 2.dp))
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Text(
+                                                                text = "${clRecord.caseType} | ${clRecord.partyName}",
+                                                                fontSize = 12.sp,
+                                                                maxLines = 2,
+                                                                modifier = Modifier.weight(1f)
+                                                            )
+                                                            IconButton(
+                                                                onClick = {
+                                                                    launchOrderSheetInChrome(context, clRecord.caseType, clRecord.fileNo)
+                                                                },
+                                                                modifier = Modifier.size(28.dp)
+                                                            ) {
+                                                                Icon(
+                                                                    Icons.Default.Info,
+                                                                    contentDescription = "Order Sheet",
+                                                                    tint = MaterialTheme.colorScheme.tertiary,
+                                                                    modifier = Modifier.size(18.dp)
+                                                                )
+                                                            }
+                                                        }
 
                                                         Surface(
                                                             color = if (matchedLocal != null) Color(0xFFE8F5E9) else Color(0xFFFFF3E0),
@@ -894,15 +909,21 @@ fun MainAppScreen(
                                                         ) {
                                                             Column(modifier = Modifier.padding(6.dp)) {
                                                                 if (matchedLocal != null) {
-                                                                    Text("✓ Local Tracker Status: '${matchedLocal.status}' (Court: ${matchedLocal.courtNo})", fontSize = 11.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
+                                                                    Text("Local Tracker Status: '${matchedLocal.status}' (Court: ${matchedLocal.courtNo})", fontSize = 11.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
                                                                     if (matchedLocal.storageLocation.isNotBlank()) {
-                                                                        Text("📍 Location: ${matchedLocal.storageLocation}", fontSize = 11.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
+                                                                        Text("Location: ${matchedLocal.storageLocation}", fontSize = 11.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
                                                                     }
                                                                     if (matchedLocal.remarks.isNotBlank()) {
-                                                                        Text("📝 Remarks: ${matchedLocal.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
+                                                                        Text("Remarks: ${matchedLocal.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
+                                                                    }
+                                                                    if (matchedLocal.reportsOnRecord.isNotBlank()) {
+                                                                        Text("Reports: ${matchedLocal.reportsOnRecord.replace("\n", ", ")}", fontSize = 11.sp, color = Color(0xFF1565C0), fontWeight = FontWeight.SemiBold)
+                                                                    }
+                                                                    if (matchedLocal.applicationsOnRecord.isNotBlank()) {
+                                                                        Text("Apps: ${matchedLocal.applicationsOnRecord}", fontSize = 11.sp, color = Color(0xFF6A1B9A), fontWeight = FontWeight.SemiBold)
                                                                     }
                                                                 } else {
-                                                                    Text("⚠️ File not yet registered in local tracker.", fontSize = 11.sp, color = Color(0xFFE65100))
+                                                                    Text("File not yet registered in local tracker.", fontSize = 11.sp, color = Color(0xFFE65100))
                                                                 }
                                                             }
                                                         }
@@ -1964,7 +1985,7 @@ fun MainAppScreen(
                             modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                         ) {
                             Text(
-                                text = "⚠️ Cannot update to '$newStatus': File has no Court Number/Serial Number recorded in database. Please Re-Dispatch first.",
+                                text = "Cannot update to '$newStatus': File has no Court Number/Serial Number recorded in database. Please Re-Dispatch first.",
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                                 fontSize = 12.sp,
                                 modifier = Modifier.padding(8.dp)
@@ -2162,6 +2183,204 @@ fun MainAppScreen(
 }
 
 @Composable
+fun CauseListIngestionView(
+    courtNo: String,
+    onCourtNoChange: (String) -> Unit,
+    date: String,
+    onDateChange: (String) -> Unit,
+    causeListDao: CauseListDao,
+    context: Context,
+    scope: kotlinx.coroutines.CoroutineScope,
+    onOpenManualWeb: () -> Unit
+) {
+    var isLoading by remember { mutableStateOf(false) }
+    var summaryMessage by remember { mutableStateOf<String?>(null) }
+
+    Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Add Cause List to Tracker", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedTextField(
+                value = courtNo,
+                onValueChange = onCourtNoChange,
+                label = { Text("Court Number * (e.g. 80)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            OutlinedTextField(
+                value = date,
+                onValueChange = onDateChange,
+                label = { Text("Cause List Date (dd-MM-yy or dd-MM-yyyy) *") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (isLoading) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                Text("Fetching cause list types from High Court portal...", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+            } else {
+                Button(
+                    enabled = courtNo.isNotBlank() && date.isNotBlank(),
+                    onClick = {
+                        isLoading = true
+                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                            try {
+                                val cleanCourtNo = stripLeadingZeros(courtNo.trim())
+                                val rawInput = date.trim()
+
+                                val apiDateStr: String
+                                val localDateStr: String
+
+                                if (rawInput.length == 8) {
+                                    localDateStr = rawInput
+                                    val parts = rawInput.split("-")
+                                    apiDateStr = if (parts.size == 3) {
+                                        val yy = parts[2]
+                                        val fullYear = if (yy.length == 2) "20$yy" else yy
+                                        "${parts[0]}-${parts[1]}-$fullYear"
+                                    } else rawInput
+                                } else if (rawInput.length == 10) {
+                                    apiDateStr = rawInput
+                                    val parts = rawInput.split("-")
+                                    localDateStr = if (parts.size == 3) {
+                                        val yyyy = parts[2]
+                                        val shortYear = if (yyyy.length == 4) yyyy.takeLast(2) else yyyy
+                                        "${parts[0]}-${parts[1]}-$shortYear"
+                                    } else rawInput
+                                } else {
+                                    apiDateStr = rawInput
+                                    localDateStr = rawInput
+                                }
+
+                                causeListDao.deleteForDateAndCourt(localDateStr, cleanCourtNo)
+
+                                val typeUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist_website/get_CauselistType")
+                                val typeConn = typeUrl.openConnection() as HttpURLConnection
+                                typeConn.requestMethod = "POST"
+                                typeConn.doOutput = true
+                                typeConn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+                                val encodedCourt = URLEncoder.encode("Court No-$cleanCourtNo", "UTF-8")
+                                val typePayload = "case_date=$apiDateStr&court_no=$encodedCourt&captchacode="
+                                typeConn.outputStream.use { os ->
+                                    os.write(typePayload.toByteArray(Charsets.UTF_8))
+                                }
+
+                                val typeHtml = if (typeConn.responseCode == HttpURLConnection.HTTP_OK) {
+                                    typeConn.inputStream.bufferedReader().use { it.readText() }
+                                } else ""
+
+                                val listTypesMap = mutableMapOf<String, String>()
+                                val jsCallRegex = Regex("viewCauselist\\(\\s*'[^']*'\\s*,\\s*'[^']*'\\s*,\\s*'(\\d+)'\\s*\\)")
+                                val doc = org.jsoup.Jsoup.parse(typeHtml)
+                                val rows = doc.select("table tr")
+
+                                for (tr in rows) {
+                                    val nameText = tr.select("strong").text().trim()
+                                    val anchor = tr.select("a[onclick]").attr("onclick")
+                                    val match = jsCallRegex.find(anchor)
+                                    if (match != null && nameText.isNotBlank()) {
+                                        val code = match.groupValues[1]
+                                        listTypesMap[code] = nameText
+                                    }
+                                }
+
+                                if (listTypesMap.isEmpty()) {
+                                    for (m in jsCallRegex.findAll(typeHtml)) {
+                                        val code = m.groupValues[1]
+                                        val name = when (code) {
+                                            "1000" -> "Combined Cause List"
+                                            "1008" -> "Correction Application List"
+                                            "1012" -> "Additional/Unlisted List-1"
+                                            "1013" -> "Additional/Unlisted List-2"
+                                            else -> "Cause List Type $code"
+                                        }
+                                        listTypesMap[code] = name
+                                    }
+                                }
+
+                                val fetchBreakdown = mutableListOf<String>()
+                                var totalFetched = 0
+
+                                for ((listTypeCode, listTypeName) in listTypesMap) {
+                                    val clUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_causelist")
+                                    val clConn = clUrl.openConnection() as HttpURLConnection
+                                    clConn.requestMethod = "POST"
+                                    clConn.doOutput = true
+                                    clConn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+
+                                    val clPayload = "case_date=$apiDateStr&court_no=$cleanCourtNo&list_type=$listTypeCode"
+                                    clConn.outputStream.use { os ->
+                                        os.write(clPayload.toByteArray(Charsets.UTF_8))
+                                    }
+
+                                    val clHtml = if (clConn.responseCode == HttpURLConnection.HTTP_OK) {
+                                        clConn.inputStream.bufferedReader().use { it.readText() }
+                                    } else ""
+
+                                    val parsedRecords = WebCauseListParser.parseHtmlCauseList(clHtml, cleanCourtNo, localDateStr)
+                                    if (parsedRecords.isNotEmpty()) {
+                                        val listTag = when {
+                                            listTypeName.contains("Correction", ignoreCase = true) -> "Correction"
+                                            listTypeName.contains("Additional", ignoreCase = true) || listTypeName.contains("Unlisted", ignoreCase = true) -> "ACL"
+                                            else -> "DCL"
+                                        }
+                                        val taggedRecords = parsedRecords.map { it.copy(listType = listTag, causeListDate = localDateStr) }
+                                        causeListDao.insertAll(taggedRecords)
+                                        fetchBreakdown.add("$listTypeName ($listTag): ${taggedRecords.size} cases")
+                                        totalFetched += taggedRecords.size
+                                    }
+                                }
+
+                                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    isLoading = false
+                                    if (totalFetched > 0) {
+                                        summaryMessage = "Successfully fetched $totalFetched total cases:\n\n" + fetchBreakdown.joinToString("\n")
+                                    } else {
+                                        summaryMessage = "No case records found for Court $cleanCourtNo on $localDateStr."
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    isLoading = false
+                                    Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("FETCH CAUSE LIST FROM WEB")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = onOpenManualWeb,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("OPEN MANUAL WEB BROWSER PORTAL")
+                }
+            }
+        }
+    }
+
+    summaryMessage?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { summaryMessage = null },
+            title = { Text("Cause List Ingestion Complete") },
+            text = { Text(msg) },
+            confirmButton = {
+                Button(onClick = { summaryMessage = null }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+}
+
+@Composable
 fun CaseCardWithMeta(
     record: FileRecord,
     onClick: () -> Unit,
@@ -2180,10 +2399,10 @@ fun CaseCardWithMeta(
                 }
             }
             Text("Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
-            if (record.storageLocation.isNotBlank()) Text("📍 Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
-            if (record.remarks.isNotBlank()) Text("📝 Remarks: ${record.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
-            if (record.reportsOnRecord.isNotBlank()) Text("📑 Reports: ${record.reportsOnRecord.replace("\n", ", ")}", fontSize = 11.sp, color = Color(0xFF1565C0))
-            if (record.applicationsOnRecord.isNotBlank()) Text("📋 Apps: ${record.applicationsOnRecord}", fontSize = 11.sp, color = Color(0xFF6A1B9A))
+            if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
+            if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
+            if (record.reportsOnRecord.isNotBlank()) Text("Reports: ${record.reportsOnRecord.replace("\n", ", ")}", fontSize = 11.sp, color = Color(0xFF1565C0))
+            if (record.applicationsOnRecord.isNotBlank()) Text("Apps: ${record.applicationsOnRecord}", fontSize = 11.sp, color = Color(0xFF6A1B9A))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.align(Alignment.End).padding(top = 4.dp)) {
                 OutlinedButton(onClick = onAddMeta, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
@@ -2743,178 +2962,6 @@ fun LiveCaseStatusPortalView(
                 modifier = Modifier.fillMaxWidth().fillMaxHeight()
             )
         }
-    }
-}
-
-@Composable
-fun CauseListIngestionView(
-    courtNo: String,
-    onCourtNoChange: (String) -> Unit,
-    date: String,
-    onDateChange: (String) -> Unit,
-    causeListDao: CauseListDao,
-    context: Context,
-    scope: kotlinx.coroutines.CoroutineScope
-) {
-    var isLoading by remember { mutableStateOf(false) }
-    var summaryMessage by remember { mutableStateOf<String?>(null) }
-
-    Card(modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Add Cause List to Tracker", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = courtNo,
-                onValueChange = onCourtNoChange,
-                label = { Text("Court Number * (e.g. 80)") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            OutlinedTextField(
-                value = date,
-                onValueChange = onDateChange,
-                label = { Text("Cause List Date (dd-MM-yy or dd-MM-yyyy) *") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-
-            if (isLoading) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
-                Text("Fetching and parsing cause list types...", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-            } else {
-                Button(
-                    enabled = courtNo.isNotBlank() && date.isNotBlank(),
-                    onClick = {
-                        isLoading = true
-                        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                            try {
-                                val cleanCourtNo = courtNo.trim()
-                                val rawInput = date.trim()
-
-                                val apiDateStr: String
-                                val localDateStr: String
-
-                                if (rawInput.length == 8) {
-                                    localDateStr = rawInput
-                                    val parts = rawInput.split("-")
-                                    apiDateStr = if (parts.size == 3) {
-                                        val yy = parts[2]
-                                        val fullYear = if (yy.length == 2) "20$yy" else yy
-                                        "${parts[0]}-${parts[1]}-$fullYear"
-                                    } else rawInput
-                                } else if (rawInput.length == 10) {
-                                    apiDateStr = rawInput
-                                    val parts = rawInput.split("-")
-                                    localDateStr = if (parts.size == 3) {
-                                        val yyyy = parts[2]
-                                        val shortYear = if (yyyy.length == 4) yyyy.takeLast(2) else yyyy
-                                        "${parts[0]}-${parts[1]}-$shortYear"
-                                    } else rawInput
-                                } else {
-                                    apiDateStr = rawInput
-                                    localDateStr = rawInput
-                                }
-
-                                causeListDao.deleteForDateAndCourt(localDateStr, cleanCourtNo)
-
-                                val typeUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/causelist_website/get_CauselistType")
-                                val typeConn = typeUrl.openConnection() as HttpURLConnection
-                                typeConn.requestMethod = "POST"
-                                typeConn.doOutput = true
-                                typeConn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-
-                                val encodedCourt = URLEncoder.encode("Court No-$cleanCourtNo", "UTF-8")
-                                val typePayload = "case_date=$apiDateStr&court_no=$encodedCourt&captchacode="
-                                typeConn.outputStream.use { os ->
-                                    os.write(typePayload.toByteArray(Charsets.UTF_8))
-                                }
-
-                                val typeHtml = if (typeConn.responseCode == HttpURLConnection.HTTP_OK) {
-                                    typeConn.inputStream.bufferedReader().use { it.readText() }
-                                } else ""
-
-                                val listTypesMap = mutableMapOf<String, String>()
-                                val rowRegex = Regex("<tr>\\s*<td>\\s*<strong>(.*?)</strong>\\s*</td>\\s*<td>.*?viewCauselist\\([^)]*?'(\\d+)'\\s*\\).*?</td>\\s*</tr>", RegexOption.DOT_MATCHES_ALL)
-                                val rowMatches = rowRegex.findAll(typeHtml)
-                                for (rm in rowMatches) {
-                                    val name = rm.groupValues[1].trim()
-                                    val code = rm.groupValues[2].trim()
-                                    listTypesMap[code] = name
-                                }
-
-                                if (listTypesMap.isEmpty()) {
-                                    val fallbackRegex = Regex("viewCauselist\\(\\s*'[^']+'\\s*,\\s*'[^']+'\\s*,\\s*'([^']+)'\\s*\\)")
-                                    for (m in fallbackRegex.findAll(typeHtml)) {
-                                        val code = m.groupValues[1]
-                                        listTypesMap[code] = "Cause List Type $code"
-                                    }
-                                }
-
-                                val fetchBreakdown = mutableListOf<String>()
-                                var totalFetched = 0
-
-                                for ((listTypeCode, listTypeName) in listTypesMap) {
-                                    val clUrl = URL("https://www.allahabadhighcourt.in/apps/status_ccms/index.php/get_causelist")
-                                    val clConn = clUrl.openConnection() as HttpURLConnection
-                                    clConn.requestMethod = "POST"
-                                    clConn.doOutput = true
-                                    clConn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-
-                                    val clPayload = "case_date=$apiDateStr&court_no=$cleanCourtNo&list_type=$listTypeCode"
-                                    clConn.outputStream.use { os ->
-                                        os.write(clPayload.toByteArray(Charsets.UTF_8))
-                                    }
-
-                                    val clHtml = if (clConn.responseCode == HttpURLConnection.HTTP_OK) {
-                                        clConn.inputStream.bufferedReader().use { it.readText() }
-                                    } else ""
-
-                                    val parsedRecords = WebCauseListParser.parseHtmlCauseList(clHtml, cleanCourtNo, localDateStr)
-                                    if (parsedRecords.isNotEmpty()) {
-                                        val taggedRecords = parsedRecords.map { it.copy(listType = listTypeName, causeListDate = localDateStr) }
-                                        causeListDao.insertAll(taggedRecords)
-                                        fetchBreakdown.add("$listTypeName: ${taggedRecords.size} cases")
-                                        totalFetched += taggedRecords.size
-                                    }
-                                }
-
-                                withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                    isLoading = false
-                                    summaryMessage = if (totalFetched > 0) {
-                                        "Successfully fetched $totalFetched total cases:\n\n" + fetchBreakdown.joinToString("\n")
-                                    } else {
-                                        "No case records found for Court $cleanCourtNo on $localDateStr."
-                                    }
-                                }
-                            } catch (e: Exception) {
-                                e.printStackTrace()
-                                withContext(kotlinx.coroutines.Dispatchers.Main) {
-                                    isLoading = false
-                                    Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("FETCH CAUSE LIST FROM WEB")
-                }
-            }
-        }
-    }
-
-    summaryMessage?.let { msg ->
-        AlertDialog(
-            onDismissRequest = { summaryMessage = null },
-            title = { Text("Cause List Ingestion Complete") },
-            text = { Text(msg) },
-            confirmButton = {
-                Button(onClick = { summaryMessage = null }) {
-                    Text("OK")
-                }
-            }
-        )
     }
 }
 
