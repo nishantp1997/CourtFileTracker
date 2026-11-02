@@ -2448,19 +2448,54 @@ fun CaseCardWithMeta(
     record: FileRecord,
     onClick: () -> Unit,
     onUpdate: () -> Unit,
-    onAddMeta: () -> Unit
+    onAddMeta: () -> Unit,
+    dateInfoLabel: String? = null,
+    daysGoneBy: Long? = null
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable { onClick() },
-        colors = CardDefaults.cardColors(containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface)
+        colors = CardDefaults.cardColors(
+            containerColor = if (record.status == "Entry Deleted") Color(0xFFFFEBEE) else MaterialTheme.colorScheme.surface
+        )
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("File No: ${record.fileNo}", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
-                    Text(record.status, color = Color.White)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "File No: ${record.fileNo}",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
+                )
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (dateInfoLabel != null && daysGoneBy != null) {
+                        val badgeColor = when {
+                            daysGoneBy < 10 -> Color(0xFF1976D2)  // Blue (< 10 Days)
+                            daysGoneBy in 10..20 -> Color(0xFFE91E63) // Pink (10 to 20 Days)
+                            else -> Color(0xFF800000)             // Maroon (> 20 Days)
+                        }
+                        Badge(containerColor = badgeColor) {
+                            Text(
+                                text = "$dateInfoLabel ($daysGoneBy d)",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Badge(containerColor = if (record.status == "Entry Deleted") Color.Red else MaterialTheme.colorScheme.primary) {
+                        Text(record.status, color = Color.White)
+                    }
                 }
             }
+
             Text("Court: ${record.courtNo} | Serial: ${record.serialNo.ifEmpty { "N/A" }}", fontSize = 12.sp)
             if (record.storageLocation.isNotBlank()) Text("Location: ${record.storageLocation}", fontSize = 12.sp, color = Color.DarkGray, fontWeight = FontWeight.SemiBold)
             if (record.remarks.isNotBlank()) Text("Remarks: ${record.remarks}", fontSize = 11.sp, color = Color(0xFFC2185B), fontWeight = FontWeight.SemiBold)
