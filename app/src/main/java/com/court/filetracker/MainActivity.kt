@@ -84,6 +84,61 @@ fun normalizeDate(input: String): String = input.trim()
 fun normalizeSearchQuery(input: String): String = input.trim()
 fun stripLeadingZeros(input: String): String = input.trim().trimStart('0').ifEmpty { "0" }
 
+fun parseDateToMillis(dateStr: String): Long? {
+    val clean = dateStr.trim()
+    if (clean.isBlank()) return null
+    val formats = listOf("dd-MM-yy", "dd-MM-yyyy", "d-M-yy", "d-M-yyyy")
+    for (pattern in formats) {
+        try {
+            val sdf = SimpleDateFormat(pattern, Locale.getDefault())
+            sdf.isLenient = false
+            val d = sdf.parse(clean)
+            if (d != null) return d.time
+        } catch (_: Exception) {}
+    }
+    return null
+}
+
+fun calculateDaysGoneBy(dateStr: String): Long? {
+    val timeMillis = parseDateToMillis(dateStr) ?: return null
+    val now = System.currentTimeMillis()
+    val diff = now - timeMillis
+    return if (diff < 0) 0L else diff / (1000L * 60 * 60 * 24)
+}
+
+fun getLatestDispatchDate(record: FileRecord): String {
+    val dates = record.dispatchDatesCsv.split(",")
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+    if (dates.isNotEmpty()) {
+        val sorted = dates.sortedByDescending { parseDateToMillis(it) ?: 0L }
+        return sorted.first()
+    }
+    if (record.dispatchDate.isNotBlank()) return record.dispatchDate.trim()
+    val regex = Regex("\\[(\\d{1,2}-\\d{1,2}-\\d{2,4})\\]")
+    val matches = regex.findAll(record.historyLog).map { it.groupValues[1] }.toList()
+    if (matches.isNotEmpty()) {
+        return matches.sortedByDescending { parseDateToMillis(it) ?: 0L }.first()
+    }
+    return ""
+}
+
+fun getChamberSentDate(record: FileRecord): String {
+    val lines = record.historyLog.split("\n")
+    val chamberDates = mutableListOf<String>()
+    for (line in lines) {
+        if (line.contains("Chamber", ignoreCase = true)) {
+            val m = Regex("\\[(\\d{1,2}-\\d{1,2}-\\d{2,4})\\]").find(line)
+            if (m != null) chamberDates.add(m.groupValues[1])
+        }
+    }
+    if (chamberDates.isNotEmpty()) {
+        return chamberDates.sortedByDescending { parseDateToMillis(it) ?: 0L }.first()
+    }
+    if (record.dispatchDate.isNotBlank()) return record.dispatchDate.trim()
+    return ""
+}
+
 fun extractCleanCaseType(rawCaseType: String): String {
     val inCaseIdx = rawCaseType.indexOf(" in ", ignoreCase = true)
     val extracted = if (inCaseIdx != -1) {
@@ -1214,11 +1269,15 @@ fun MainAppScreen(
                                     Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
                                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                             items(chamberFiles) { record ->
+                                                val chamberDate = getChamberSentDate(record)
+                                                val daysGone = if (chamberDate.isNotBlank()) calculateDaysGoneBy(chamberDate) else null
                                                 CaseCardWithMeta(
                                                     record = record,
                                                     onClick = { activeTraceRecord = record },
                                                     onUpdate = { activeUpdateRecord = record },
-                                                    onAddMeta = { targetFileForMetaData = record }
+                                                    onAddMeta = { targetFileForMetaData = record },
+                                                    dateInfoLabel = if (chamberDate.isNotBlank()) "Chamber: $chamberDate" else null,
+                                                    daysGoneBy = daysGone
                                                 )
                                             }
                                         }
@@ -1230,11 +1289,15 @@ fun MainAppScreen(
                                     Column(modifier = Modifier.fillMaxWidth().fillMaxHeight()) {
                                         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                             items(takenUpFiles) { record ->
+                                                val latestDate = getLatestDispatchDate(record)
+                                                val daysGone = if (latestDate.isNotBlank()) calculateDaysGoneBy(latestDate) else null
                                                 CaseCardWithMeta(
                                                     record = record,
                                                     onClick = { activeTraceRecord = record },
                                                     onUpdate = { activeUpdateRecord = record },
-                                                    onAddMeta = { targetFileForMetaData = record }
+                                                    onAddMeta = { targetFileForMetaData = record },
+                                                    dateInfoLabel = if (latestDate.isNotBlank()) "Dispatched: $latestDate" else null,
+                                                    daysGoneBy = daysGone
                                                 )
                                             }
                                         }
