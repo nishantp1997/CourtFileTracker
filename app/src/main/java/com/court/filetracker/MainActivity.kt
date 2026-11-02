@@ -1276,7 +1276,7 @@ fun MainAppScreen(
                                                     onClick = { activeTraceRecord = record },
                                                     onUpdate = { activeUpdateRecord = record },
                                                     onAddMeta = { targetFileForMetaData = record },
-                                                    dateInfoLabel = if (chamberDate.isNotBlank()) "Chamber: $chamberDate" else null,
+                                                    dateInfoLabel = if (chamberDate.isNotBlank()) "$chamberDate" else null,
                                                     daysGoneBy = daysGone
                                                 )
                                             }
@@ -1296,7 +1296,7 @@ fun MainAppScreen(
                                                     onClick = { activeTraceRecord = record },
                                                     onUpdate = { activeUpdateRecord = record },
                                                     onAddMeta = { targetFileForMetaData = record },
-                                                    dateInfoLabel = if (latestDate.isNotBlank()) "Dispatched: $latestDate" else null,
+                                                    dateInfoLabel = if (latestDate.isNotBlank()) "$latestDate" else null,
                                                     daysGoneBy = daysGone
                                                 )
                                             }
